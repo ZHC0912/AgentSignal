@@ -1,0 +1,93 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AgentSignal.App.Views.SettingsWindow"
+        Title="AgentSignal — Settings"
+        Width="420"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterScreen"
+        Background="#15171C">
+
+  <Window.Styles>
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="#9FB0C0" />
+      <Setter Property="Margin" Value="0,18,0,8" />
+    </Style>
+    <Style Selector="TextBlock.label">
+      <Setter Property="Foreground" Value="#E8FFFFFF" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Width" Value="110" />
+    </Style>
+    <Style Selector="Border.swatch">
+      <Setter Property="Width" Value="34" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="CornerRadius" Value="5" />
+      <Setter Property="BorderBrush" Value="#33FFFFFF" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="TextBox.hex">
+      <Setter Property="Width" Value="120" />
+      <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
+    </Style>
+  </Window.Styles>
+
+  <StackPanel Margin="22,16,22,22">
+
+    <!-- Colours -->
+    <TextBlock Classes="section" Text="DOT COLOURS" Margin="0,0,0,8" />
+    <StackPanel Spacing="9">
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <TextBlock Classes="label" Text="Green (idle)" />
+        <TextBox Classes="hex" Text="{Binding GreenColor}" />
+        <Border Classes="swatch" Background="{Binding GreenSwatch}" />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <TextBlock Classes="label" Text="Yellow (working)" />
+        <TextBox Classes="hex" Text="{Binding YellowColor}" />
+        <Border Classes="swatch" Background="{Binding YellowSwatch}" />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <TextBlock Classes="label" Text="Red (waiting)" />
+        <TextBox Classes="hex" Text="{Binding RedColor}" />
+        <Border Classes="swatch" Background="{Binding RedSwatch}" />
+      </StackPanel>
+    </StackPanel>
+
+    <!-- Alerts -->
+    <TextBlock Classes="section" Text="ALERTS" />
+    <StackPanel Spacing="8">
+      <CheckBox Content="Alert on red (sound + notification when an agent needs permission)"
+                IsChecked="{Binding AlertOnRed}" />
+      <CheckBox Content="Alert on green (when a run finishes)"
+                IsChecked="{Binding AlertOnGreen}" />
+      <Button Content="Test alert" Command="{Binding TestAlertCommand}" HorizontalAlignment="Left" />
+    </StackPanel>
+
+    <!-- Appearance -->
+    <TextBlock Classes="section" Text="APPEARANCE" />
+    <StackPanel Spacing="6">
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <TextBlock Classes="label" Text="Size" />
+        <Slider Width="210" Minimum="0.6" Maximum="2.0" Value="{Binding Scale}" />
+        <TextBlock Width="46" Foreground="#CCFFFFFF" VerticalAlignment="Center"
+                   Text="{Binding Scale, StringFormat={}{0:0.00}x}" />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <TextBlock Classes="label" Text="Opacity" />
+        <Slider Width="210" Minimum="0.2" Maximum="1.0" Value="{Binding Opacity}" />
+        <TextBlock Width="46" Foreground="#CCFFFFFF" VerticalAlignment="Center"
+                   Text="{Binding Opacity, StringFormat={}{0:0%}}" />
+      </StackPanel>
+    </StackPanel>
+
+    <!-- Behaviour -->
+    <TextBlock Classes="section" Text="BEHAVIOUR" />
+    <StackPanel Spacing="8">
+      <CheckBox Content="Lock position (ignore drags)" IsChecked="{Binding LockPosition}" />
+      <CheckBox Content="Launch on startup" IsChecked="{Binding LaunchOnStartup}" />
+    </StackPanel>
+
+  </StackPanel>
+</Window>

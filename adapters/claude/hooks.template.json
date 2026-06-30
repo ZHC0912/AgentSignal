@@ -1,0 +1,9 @@
+{
+  "SessionStart":      [{ "hooks": [{ "type": "command", "command": "{{WRITER_PATH}} claude green" }] }],
+  "UserPromptSubmit":  [{ "hooks": [{ "type": "command", "command": "{{WRITER_PATH}} claude yellow" }] }],
+  "PreToolUse":        [{ "hooks": [{ "type": "command", "command": "{{WRITER_PATH}} claude yellow" }] }],
+  "PostToolUse":       [{ "hooks": [{ "type": "command", "command": "{{WRITER_PATH}} claude yellow" }] }],
+  "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "{{WRITER_PATH}} claude red" }] }],
+  "Stop":              [{ "hooks": [{ "type": "command", "command": "{{WRITER_PATH}} claude green" }] }],
+  "SessionEnd":        [{ "hooks": [{ "type": "command", "command": "{{WRITER_PATH}} claude off" }] }]
+}

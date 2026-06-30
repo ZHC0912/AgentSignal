@@ -1,0 +1,51 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="AgentSignal.App.Views.DotsView">
+
+  <UserControl.Styles>
+    <!-- A dot is dim by default; the active one lights up to full opacity with a soft colour glow. -->
+    <Style Selector="Border.dot">
+      <Setter Property="Width" Value="15" />
+      <Setter Property="Height" Value="15" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Opacity" Value="0.18" />
+    </Style>
+    <Style Selector="Border.green">
+      <Setter Property="Background" Value="{DynamicResource GreenBrush}" />
+    </Style>
+    <Style Selector="Border.yellow">
+      <Setter Property="Background" Value="{DynamicResource YellowBrush}" />
+    </Style>
+    <Style Selector="Border.red">
+      <Setter Property="Background" Value="{DynamicResource RedBrush}" />
+    </Style>
+
+    <Style Selector="Border.dot.active">
+      <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Border.green.active">
+      <Setter Property="BoxShadow" Value="{DynamicResource GreenGlow}" />
+    </Style>
+    <Style Selector="Border.yellow.active">
+      <Setter Property="BoxShadow" Value="{DynamicResource YellowGlow}" />
+    </Style>
+    <Style Selector="Border.red.active">
+      <Setter Property="BoxShadow" Value="{DynamicResource RedGlow}" />
+    </Style>
+  </UserControl.Styles>
+
+  <StackPanel Orientation="Vertical" Spacing="3" HorizontalAlignment="Center">
+    <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+      <Border Classes="dot green"  Classes.active="{Binding IsGreenActive}" />
+      <Border Classes="dot yellow" Classes.active="{Binding IsYellowActive}" />
+      <Border Classes="dot red"    Classes.active="{Binding IsRedActive}" />
+    </StackPanel>
+    <!-- Active work time, directly under the dots (m:ss / h:mm:ss). -->
+    <TextBlock Text="{Binding TimerText}"
+               IsVisible="{Binding HasTimer}"
+               Foreground="#E8FFFFFF"
+               FontFamily="Consolas, Menlo, monospace"
+               FontSize="12"
+               HorizontalAlignment="Center" />
+  </StackPanel>
+</UserControl>

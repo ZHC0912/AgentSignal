@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>AgentSignal.Writer</AssemblyName>
+    <RootNamespace>AgentSignal.Writer</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- AOT-ready. NativeAOT publishing is the eventual goal but needs the platform C/C++ toolchain
+         (MSVC link.exe on Windows). Where that is unavailable, deploy as a self-contained single-file
+         binary instead (see adapters/claude/README.md and the project notes); both produce a
+         dependency-free native exe suitable for the hook path. -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentSignal.Core\AgentSignal.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Claude adapter's hook definition lives under adapters/claude and is embedded so the
+         deployed writer can self-install (AgentSignal.Writer install claude). -->
+    <EmbeddedResource Include="..\..\adapters\claude\hooks.template.json" LogicalName="claude-hooks.json" />
+  </ItemGroup>
+
+</Project>

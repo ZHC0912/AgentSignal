@@ -1,0 +1,22 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="AgentSignal.App.App"
+             RequestedThemeVariant="Dark">
+
+  <TrayIcon.Icons>
+    <TrayIcons>
+      <TrayIcon Icon="/Assets/tray.png" ToolTipText="AgentSignal">
+        <TrayIcon.Menu>
+          <NativeMenu>
+            <NativeMenuItem Header="Settings…" Click="TraySettingsClick" />
+            <NativeMenuItem Header="Quit" Click="TrayQuitClick" />
+          </NativeMenu>
+        </TrayIcon.Menu>
+      </TrayIcon>
+    </TrayIcons>
+  </TrayIcon.Icons>
+
+  <Application.Styles>
+    <FluentTheme />
+  </Application.Styles>
+</Application>

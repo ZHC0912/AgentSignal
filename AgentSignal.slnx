@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AgentSignal.App/AgentSignal.App.csproj" />
+    <Project Path="src/AgentSignal.Core/AgentSignal.Core.csproj" />
+    <Project Path="src/AgentSignal.Writer/AgentSignal.Writer.csproj" />
+  </Folder>
+</Solution>
