@@ -2,7 +2,71 @@
 
 Build a small, always-on-top desktop widget that shows the live state of AI coding agents as a horizontal "traffic light" (green / yellow / red), with a work-time timer and a settings page. The first supported agent is **Claude Code**, but the app is designed to support others (Codex, Antigravity, …) through a pluggable adapter layer.
 
-This file is the full spec. Read it fully before writing code, and follow the build order at the end — **Phase 0 is mandatory and comes first.**
+This file is the full spec. Read it fully before writing code, and follow the build order at the end. **Phase 0 was mandatory and came first — it is now done; do not redo it.** Sections 0–14 below are the *original brief* and are unchanged. For where the build actually stands, read **§A (Build status & working notes) first** — it is the source of truth for current state.
+
+---
+
+## A. Build status & working notes (READ FIRST)
+
+> This section is the live state of the project. The numbered spec below (§0–§14) is the original brief and stays stable; this section tracks what's actually built and how to pick the work up on any machine. Last updated **2026-06-30**.
+
+### A.1 Phase status
+
+| Phase | What | Status |
+|-------|------|--------|
+| 0 | Instrument & verify Claude hook event order | ✅ **done & accepted** — mapping locked, written up in [`adapters/claude/phase0/FINDINGS.md`](adapters/claude/phase0/FINDINGS.md) |
+| 1 | `AgentSignal.Core` + `AgentSignal.Writer` + Claude adapter installer | ✅ **done & accepted** — verified end-to-end (session files create/update/delete, PID capture) |
+| 2 | Core widget (frameless, always-on-top, translucent pill; 3 dots; 250ms poll; draggable; position persisted) | ✅ **done & accepted** |
+| 3 | Work-time timer (per-session accumulate/pause/freeze/reset; Decision #1 back-credit) | ✅ **done & accepted** — `--timer-test` proves the §8 1:10 case |
+| 4 | Multiple concurrent sessions (expand/collapse, per-session rows, liveness removal, no flicker) | ✅ **done & accepted** — verified with two real `claude` sessions |
+| 5 | Settings + alerts + tray + launch-on-startup | ✅ **done & accepted** — colours/alerts/size/opacity/lock/startup persist & apply live |
+| 6 | Alerts & startup **polish** | ⏳ **NEXT** — alerts + startup are already implemented in Phase 5, so this is refinement only (e.g. per-session red granularity, confirming sound/notification on real red/green live, launch-on-startup UX). **Gated:** the owner reviews each phase before the next — don't start Phase 6 without a go-ahead. |
+| 7 | Polish + Windows/Linux packaging | ⏳ after 6 — a self-contained App build would remove the `DOTNET_ROOT`-at-logon caveat (see A.4) |
+
+### A.2 Locked decisions (carry forward — do not relitigate)
+
+1. **Accurate timer.** The writer forwards `durationMs` (from Claude's `duration_ms`) on `PostToolUse`. The widget **back-credits it only on the `red → PostToolUse` transition**, so post-approval tool execution is counted but the human's approval wait is excluded. A plain `yellow → yellow` `PostToolUse` is already tick-counted and must **not** be double-credited. (This produces the §8 "1:10" result.)
+2. **Red-during-long-approved-tool is an accepted hard limit.** No Claude hook fires at the instant a permission is approved (the next event is `PostToolUse`, which only arrives when the approved tool finishes). So `red` unavoidably spans the wait *and* that tool's execution. **Do not try to work around this** — it's a limit of the hook set, documented in Phase 0.
+
+### A.3 As-built layout (matches §11, with the concrete service names)
+
+- `src/AgentSignal.Core/` — `SessionState` (incl. `DurationMs`), `AgentPaths`, `ProcessHelper` (ancestry + liveness), `SettingsMerger`.
+- `src/AgentSignal.Writer/` — console binary; reads hook JSON from stdin, writes/updates/deletes `~/.agentsignal/sessions/<tool>__<session_id>.json`, captures agent PID via ancestry on `SessionStart`, forwards `duration_ms`→`durationMs`. Has an `install <tool>` subcommand (embeds [`adapters/claude/hooks.template.json`](adapters/claude/hooks.template.json)).
+- `src/AgentSignal.App/` — Avalonia widget.
+  - `Services/`: `WorkTimer` (pure per-session stopwatch), `SessionReader`, `ConfigService` (singleton: `Instance`, `Current`, `Update(mutate)`→save+`Changed` event), `ThemeService` (writes colour brushes + glow `BoxShadows` into `Application.Resources` as **DynamicResource**), `Alerts` (`ISoundPlayer`=`SystemSoundPlayer` Console.Beep on bg thread + `INotifier`=`ToastNotifier`→`ToastWindow`; `AlertService.OnRed/OnGreen/Test`), `StartupManager` (`IStartupManager`; Windows = `reg.exe` HKCU `…\Run` value `AgentSignal`; Noop elsewhere).
+  - `ViewModels/`: `DotsViewModel` (abstract base — state + timer text + active flags + static `FormatElapsed`), `SessionRowViewModel : DotsViewModel` (one per session, owns a `WorkTimer`), `WidgetViewModel : DotsViewModel` (reconciles `ObservableCollection<SessionRowViewModel>` **in place** each 250ms tick — no `Clear()` so no flicker — picks the driving session, fires alerts on aggregate edges), `SettingsViewModel`.
+  - `Views/`: `WidgetWindow` (+ `LayoutTransformControl` `ScaleHost` for live scale/opacity), `PillView` (collapsed `DotsView` vs expanded `ItemsControl` of rows + gear `Button` at the panel edge), `DotsView`, `SettingsWindow`, `ToastWindow`.
+- `adapters/claude/` — locked mapping + `hooks.template.json` + `phase0/`. See [`adapters/claude/README.md`](adapters/claude/README.md).
+
+### A.4 Build & run (do this fresh on each machine)
+
+**Per-machine state is NOT in the repo.** `~/.agentsignal/` (the deployed writer, `config.json`, `sessions/`) and the hook entries in `~/.claude/settings.json` are created by the installer and must be recreated on every PC. Your widget colours/position/size live in `~/.agentsignal/config.json` and won't transfer via git.
+
+1. **Prereq:** .NET 10 SDK. Both projects target `net10.0`; the solution is the new XML format `AgentSignal.slnx` (needs a recent `dotnet`).
+2. **Build:** `dotnet build AgentSignal.slnx`
+3. **Run the widget:** `dotnet run --project src/AgentSignal.App` (no args = the live always-on-top widget). The App is **framework-dependent** (no RID/`SelfContained` in its csproj), so the machine needs the .NET 10 **runtime** to run it.
+4. **Install the Claude integration:** build/publish the writer, then run `AgentSignal.Writer install claude`. This copies the writer to `~/.agentsignal/` and **merges** the hook mapping into the **user-level `~/.claude/settings.json`** (append-only, idempotent), substituting the writer's absolute path.
+5. **Writer packaging:** the writer is `IsAotCompatible` and the *goal* is NativeAOT, but that needs a platform C/C++ toolchain (MSVC `link.exe` on Windows). Where that's unavailable, publish **self-contained single-file** instead — both give a dependency-free native exe for the hook path, e.g. `dotnet publish src/AgentSignal.Writer -c Release -r <rid> --self-contained -p:PublishSingleFile=true`.
+
+> **Original dev machine quirk (Windows):** .NET 10 was installed at `~/.dotnet` and **not on PATH**, and since the App is framework-dependent its apphost couldn't find the runtime — so it was launched via `dotnet src/AgentSignal.App/bin/.../AgentSignal.App.dll`, or by setting `DOTNET_ROOT=%USERPROFILE%\.dotnet` before the apphost. If `dotnet` is on PATH on your machine, `dotnet run` just works and you can ignore this.
+
+### A.5 Diagnostics (`AgentSignal.App` flags — no display needed)
+
+- `--dump` — print live sessions + aggregate colour and exit.
+- `--timer-test` — replay the §8 permission scenario through the real `WorkTimer` (proves **1:10**).
+- `--watch [seconds]` — run the real reconcile loop over live session files, printing rows as sessions come/go.
+- `--config` — print the on-disk `config.json` from a fresh process (use after editing to confirm persistence) + whether launch-on-startup is registered.
+- `--settings-demo <dir>` — headless: render the real `WidgetWindow` before/after live settings edits + a toast, and toggle the startup registry key.
+- `--screenshot <path>` — render a static preview PNG.
+
+### A.6 Gotchas (the ones that bit us)
+
+- **Hooks go in user-level `~/.claude/settings.json` only — never `settings.local.json`**, which some harnesses rewrite and would silently drop the hooks (Phase 0 finding).
+- **`AlertOnRed` defaults `true`**, so the running widget **beeps + toasts whenever any session goes red** — including the dev session hitting a permission prompt. Toggle it off in Settings if it's noisy while you work.
+- **Live-screenshotting the running transparent/topmost widget is unreliable here** — use the headless `--screenshot` / `--settings-demo` renders instead.
+- **Interactive `claude` sitting at a prompt may not fire `SessionStart`** (no session file). Use `claude -p "<prompt>"` print-mode to exercise the full hook lifecycle when testing.
+- **`Grid.RowSpacing` isn't in Avalonia 11.2** — use stacked `StackPanel`s with `Spacing` instead.
+- **Git workflow for this repo:** solo project — "push to git" means commit straight to `main` and push (no branch/PR).
 
 ---
 
