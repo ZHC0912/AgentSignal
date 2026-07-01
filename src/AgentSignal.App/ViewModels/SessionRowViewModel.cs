@@ -35,5 +35,6 @@ public sealed class SessionRowViewModel : DotsViewModel
             _ => AggregateState.Off,
         };
         TimerText = _timer.HasValue ? FormatElapsed(_timer.Elapsed) : "";
+        TickPulse(nowUtc);
     }
 }

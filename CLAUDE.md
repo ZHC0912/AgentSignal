@@ -8,7 +8,7 @@ This file is the full spec. Read it fully before writing code, and follow the bu
 
 ## A. Build status & working notes (READ FIRST)
 
-> This section is the live state of the project. The numbered spec below (§0–§14) is the original brief and stays stable; this section tracks what's actually built and how to pick the work up on any machine. Last updated **2026-06-30**.
+> This section is the live state of the project. The numbered spec below (§0–§14) is the original brief and stays stable; this section tracks what's actually built and how to pick the work up on any machine. Last updated **2026-07-01**.
 
 ### A.1 Phase status
 
@@ -20,8 +20,9 @@ This file is the full spec. Read it fully before writing code, and follow the bu
 | 3 | Work-time timer (per-session accumulate/pause/freeze/reset; Decision #1 back-credit) | ✅ **done & accepted** — `--timer-test` proves the §8 1:10 case |
 | 4 | Multiple concurrent sessions (expand/collapse, per-session rows, liveness removal, no flicker) | ✅ **done & accepted** — verified with two real `claude` sessions |
 | 5 | Settings + alerts + tray + launch-on-startup | ✅ **done & accepted** — colours/alerts/size/opacity/lock/startup persist & apply live |
-| 6 | Alerts & startup **polish** | ⏳ **NEXT** — alerts + startup are already implemented in Phase 5, so this is refinement only (e.g. per-session red granularity, confirming sound/notification on real red/green live, launch-on-startup UX). **Gated:** the owner reviews each phase before the next — don't start Phase 6 without a go-ahead. |
-| 7 | Polish + Windows/Linux packaging | ⏳ after 6 — a self-contained App build would remove the `DOTNET_ROOT`-at-logon caveat (see A.4) |
+| 6 | Alerts & startup **polish** + **green-blink** feature | ✅ **done & accepted** (2026-07-01) — see A.7. Per-session red alerting (debounced); real-live red & green alerts confirmed via `AGENTSIGNAL_DEBUG` trace (not just headless); launch-on-startup confirmed to use the `~/.dotnet` host & launch in a clean env, disable removes the key; configurable green-blink. |
+| 6.5 | **UI layout refinements** (three-piece layout + glow-clip fix + 3× size cap) | 🟦 **in progress (2026-07-01)** — logic/headless-verified & no-crash confirmed; **awaiting live human eyeball** on the running widget. See A.7. |
+| 7 | Polish + Windows/Linux packaging | ⏳ **next** — a self-contained App build would remove the `DOTNET_ROOT`-at-logon caveat (see A.4) |
 
 ### A.2 Locked decisions (carry forward — do not relitigate)
 
@@ -34,8 +35,11 @@ This file is the full spec. Read it fully before writing code, and follow the bu
 - `src/AgentSignal.Writer/` — console binary; reads hook JSON from stdin, writes/updates/deletes `~/.agentsignal/sessions/<tool>__<session_id>.json`, captures agent PID via ancestry on `SessionStart`, forwards `duration_ms`→`durationMs`. Has an `install <tool>` subcommand (embeds [`adapters/claude/hooks.template.json`](adapters/claude/hooks.template.json)).
 - `src/AgentSignal.App/` — Avalonia widget.
   - `Services/`: `WorkTimer` (pure per-session stopwatch), `SessionReader`, `ConfigService` (singleton: `Instance`, `Current`, `Update(mutate)`→save+`Changed` event), `ThemeService` (writes colour brushes + glow `BoxShadows` into `Application.Resources` as **DynamicResource**), `Alerts` (`ISoundPlayer`=`SystemSoundPlayer` Console.Beep on bg thread + `INotifier`=`ToastNotifier`→`ToastWindow`; `AlertService.OnRed/OnGreen/Test`), `StartupManager` (`IStartupManager`; Windows = `reg.exe` HKCU `…\Run` value `AgentSignal`; Noop elsewhere).
-  - `ViewModels/`: `DotsViewModel` (abstract base — state + timer text + active flags + static `FormatElapsed`), `SessionRowViewModel : DotsViewModel` (one per session, owns a `WorkTimer`), `WidgetViewModel : DotsViewModel` (reconciles `ObservableCollection<SessionRowViewModel>` **in place** each 250ms tick — no `Clear()` so no flicker — picks the driving session, fires alerts on aggregate edges), `SettingsViewModel`.
-  - `Views/`: `WidgetWindow` (+ `LayoutTransformControl` `ScaleHost` for live scale/opacity), `PillView` (collapsed `DotsView` vs expanded `ItemsControl` of rows + gear `Button` at the panel edge), `DotsView`, `SettingsWindow`, `ToastWindow`.
+  - `ViewModels/`: `DotsViewModel` (abstract base — state + timer text + active flags + static `FormatElapsed`; also owns the **reusable green-blink**: `IsGreenPulsing`, started in `OnStateChanged` on entering green for `config.BlinkOnGreenSeconds`, cancelled at once on any other transition, expired by `TickPulse(now)` from the poll), `SessionRowViewModel : DotsViewModel` (one per session, owns a `WorkTimer`), `WidgetViewModel : DotsViewModel` (reconciles `ObservableCollection<SessionRowViewModel>` **in place** each 250ms tick — no `Clear()` so no flicker — picks the driving session; fires **per-session red alerts, debounced** via a `_redAlerted` set, plus the aggregate green edge), `SettingsViewModel`.
+  - `Views/`: `WidgetWindow` (+ `LayoutTransformControl` `ScaleHost` for live scale/opacity), `PillView`, `DotsView` (the `.dot.pulse` opacity animation = the green-blink, bound to `IsGreenPulsing`), `SettingsWindow`, `ToastWindow`.
+    - **Three-piece layout (A.7 refinement):** `PillView` is a vertical stack of *separate* chips — a fixed **dots pill** (`DotsView`, dots-only) on top, then a `Grid` row holding the **timer pill** pinned left (visible when `HasTimer`) and the **gear pill** pinned right (visible when `IsExpanded`, i.e. revealed on click). Expanded = one dots pill per session in an `ItemsControl` (dots-only, consistent). The timer/gear `Grid` stretches to the dots-pill width so the two chips align to its left/right edges; timer & gear pills share one style (matched size: `CornerRadius` 11, `Padding` 11,3, `MinHeight` 22).
+    - **`DotsView`** renders each dot centred in a **44×44 transparent `Border.cell`**. This is load-bearing: Avalonia clips a control's `BoxShadow` to its arrange slot, so a bare 15×15 dot cut the round glow into a **square**; the roomy cell lets the glow fade fully → round halo (fix documented in A.6). Dots-pill padding is therefore small (`8,2`).
+  - `Models/AppConfig`: `BlinkOnGreenSeconds` (0–5, default 2; 0 = off); `Scale` range is **0.6–3.0** (settings slider cap raised from 2× to 3×; default still 1.0).
 - `adapters/claude/` — locked mapping + `hooks.template.json` + `phase0/`. See [`adapters/claude/README.md`](adapters/claude/README.md).
 
 ### A.4 Build & run (do this fresh on each machine)
@@ -58,6 +62,9 @@ This file is the full spec. Read it fully before writing code, and follow the bu
 - `--config` — print the on-disk `config.json` from a fresh process (use after editing to confirm persistence) + whether launch-on-startup is registered.
 - `--settings-demo <dir>` — headless: render the real `WidgetWindow` before/after live settings edits + a toast, and toggle the startup registry key.
 - `--screenshot <path>` — render a static preview PNG.
+- `--blink-test` — drive a real `SessionRowViewModel` through the green-blink lifecycle (start / cancel-on-green→yellow / auto-settle), printing `IsGreenPulsing` at each step. Honours `config.BlinkOnGreenSeconds` (0 = off).
+- `--startup <on|off|status>` — toggle/inspect the real launch-on-startup `Run` entry; `--watch` rows now also show `blink=ON` while a session's green-blink is active.
+- **`AGENTSIGNAL_DEBUG=1`** (env) — the live widget appends every fired alert + every toast shown to `~/.agentsignal/alerts.log` (with the triggering session key), so a real-live red/green alert is verifiable without an audio/screen capture. Off by default.
 
 ### A.6 Gotchas (the ones that bit us)
 
@@ -66,7 +73,31 @@ This file is the full spec. Read it fully before writing code, and follow the bu
 - **Live-screenshotting the running transparent/topmost widget is unreliable here** — use the headless `--screenshot` / `--settings-demo` renders instead.
 - **Interactive `claude` sitting at a prompt may not fire `SessionStart`** (no session file). Use `claude -p "<prompt>"` print-mode to exercise the full hook lifecycle when testing.
 - **`Grid.RowSpacing` isn't in Avalonia 11.2** — use stacked `StackPanel`s with `Spacing` instead.
+- **Avalonia keyframe `Animation` has no default animator for `RenderTransform`** — animating `RenderTransform="scale(..)"` in a `<KeyFrame>` throws *"No animator registered for the property RenderTransform"* at window construction and crashes the app. The green-blink therefore animates **`Opacity` only** (the `DoubleAnimator` is always registered; it also never reflows the row). To animate a transform later, register `TransformOperationsAnimator` first.
+- **`Start-Process` here does NOT propagate env vars** set via `$env:X=...` in the same shell to the child (a `cmd /c set` child saw nothing). To launch with `AGENTSIGNAL_DEBUG=1`, use the **Bash tool's inline `VAR=val cmd` prefix**, or set it machine/user-wide — not `$env:` + `Start-Process`.
+- **Avalonia clips a control's `BoxShadow` (glow) to its arrange slot, not just to `ClipToBounds`.** A dot in the horizontal dots `StackPanel` got only a 15×15 slot, so the round glow was cut into a faint **square** framing each dot (worst on the lit one). Outer-pill padding can't fix it — the clip is *per-dot*. Fix: wrap each dot in a larger transparent cell (`Border.cell`, 44×44) so the glow fades fully inside its own slot. Isolated with 6× headless renders (bare dot = square; wrapped dot = round). To retune the glow, keep cell ≳ dot + 2×(blur+spread).
+- **Rebuild fails with `MSB3021`/file-lock while the widget is running** — the running host locks `AgentSignal.App.dll`. Kill it first: `Get-CimInstance Win32_Process | Where CommandLine -like '*AgentSignal.App*' | Stop-Process -Force`. (A failed build silently leaves the *old* dll, so `--screenshot` renders stale — always check the build printed `0 Error(s)`.)
 - **Git workflow for this repo:** solo project — "push to git" means commit straight to `main` and push (no branch/PR).
+
+### A.7 Phase 6 (accepted) + UI layout refinements (in progress)
+
+**Phase 6 — done & accepted (2026-07-01).** Scope was Phase 6 polish **plus** a new green-blink feature; phone/push notifications were explicitly deferred and **not** built.
+
+- **Green-blink (new).** Entering green pulses the green dot (smooth `Opacity` sine fade — a glow swell, not a strobe) for `BlinkOnGreenSeconds` (settings slider 0–5s, 0 = off; persisted, applied live), then settles to steady. A new run before it ends (green→yellow) cancels it immediately. Built as a reusable per-state pulse on `DotsViewModel`/`.dot.pulse` so a future "pulse while yellow" can reuse it (not added). Verified via `--blink-test` (start/cancel/settle/0=off all pass).
+- **Per-session red alerts.** A 2nd session going red now notifies even when the aggregate was already red; debounced per session (`_redAlerted`) so it can't repeat-fire while it sits red. Verified live (`testA`+`testB` both fired, debounce held).
+- **Real-live red & green confirmed.** Sound + the existing in-window toast (no native Action Center) fire on a real running widget — traced in `~/.agentsignal/alerts.log` via `AGENTSIGNAL_DEBUG=1` (red ×2 + green "Run finished").
+- **Launch-on-startup finalized.** `Run` value uses the **`~/.dotnet` host** (verified it launches in a clean env with no `DOTNET_ROOT` and dotnet off PATH); `--startup off` fully removes the key.
+
+**Phase 6.5 — UI layout refinements (in progress; awaiting a live human eyeball).** Reworked the widget from one combined pill into three separate chips and fixed the dot glow. All headless-verified via `--screenshot` and confirmed not to crash the live window; the only thing left is the owner eyeballing it on-screen.
+
+- ✅ **Three-piece layout.** Fixed **dots pill** on top; below it a row with the **timer pill** (own background, shown whenever a run is on) and the **gear pill** (own background, revealed on click). Collapsed *and* expanded views both use the dots-only pill; the gear opens Settings without collapsing (button marks the pointer handled). *Done, headless-verified.*
+- ✅ **Per-dot square glow-clip fixed.** The faint square framing each dot was the `BoxShadow` clipped to the dot's 15×15 arrange slot; wrapping each dot in a 44×44 transparent `Border.cell` makes the glow render as a round halo (see A.6). Verified round on the lit dot at 1× and 3×. *Done, headless-verified.*
+- ✅ **Gear pill matched to timer pill** (same corner radius / padding / height, one shared style). *Done, headless-verified.*
+- ✅ **Timer pinned left, gear pinned right**, aligned to the dots-pill edges (timer/gear `Grid` stretches to the dots-pill width); **tighter vertical gap** between the dots pill and the row (`Spacing` 6→3). *Done, headless-verified.*
+- ✅ **Size cap raised 2× → 3×** (settings slider `Maximum="3.0"`; default 1.0 unchanged; no load-time clamp, so nothing else needed). Dots/glow/timer stay crisp (vector-scaled) at 3×. *Done, headless-verified.*
+- 🟦 **Still in progress:** none of the above has been **eyeballed live by a human** yet — logic + no-crash are confirmed, but the on-screen look (round glow, chip alignment, tighter gap, 3× crispness) is best judged on the running widget. Also **not yet done for Phase 6.5:** the green-blink pulse animation itself was never live-eyeballed either (carried over from Phase 6).
+
+**Next: Phase 7 (packaging).** After the live eyeball, do Windows/Linux packaging — a self-contained App build removes the `DOTNET_ROOT`-at-logon caveat (A.4).
 
 ---
 

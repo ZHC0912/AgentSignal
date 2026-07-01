@@ -4,15 +4,39 @@
              x:Class="AgentSignal.App.Views.PillView">
 
   <UserControl.Styles>
-    <!-- Settings gear that sits at the edge of the expanded panel. -->
+    <!-- Detached pill base shared by the dots pill, the timer pill and the gear pill. Each is its own
+         rounded, translucent chip. -->
+    <Style Selector="Border.pill">
+      <Setter Property="Background" Value="#D90F1115" />
+      <Setter Property="BorderBrush" Value="#26FFFFFF" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="VerticalAlignment" Value="Top" />
+    </Style>
+    <!-- Dots pill: fixed rounded pill. Padding is modest because each dot's glow is contained inside its
+         own transparent cell (see DotsView), so nothing clips at the pill edge. -->
+    <Style Selector="Border.pill.dots">
+      <Setter Property="CornerRadius" Value="21" />
+      <Setter Property="Padding" Value="8,2" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+    </Style>
+    <!-- Timer and gear pills are a matched pair: identical corner radius, padding and height. -->
+    <Style Selector="Border.pill.timer, Border.pill.gear">
+      <Setter Property="CornerRadius" Value="11" />
+      <Setter Property="Padding" Value="11,3" />
+      <Setter Property="MinHeight" Value="22" />
+    </Style>
+
+    <!-- Settings gear button that sits inside the gear pill. Sized to match the timer text so the two
+         chips are the same height. -->
     <Style Selector="Button.gear">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Padding" Value="4" />
-      <Setter Property="Margin" Value="6,-2,-4,0" />
-      <Setter Property="VerticalAlignment" Value="Top" />
-      <Setter Property="Foreground" Value="#80FFFFFF" />
-      <Setter Property="FontSize" Value="15" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="Foreground" Value="#B0FFFFFF" />
+      <Setter Property="FontSize" Value="13" />
       <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe UI Symbol, Inter" />
       <Setter Property="Cursor" Value="Hand" />
     </Style>
@@ -22,37 +46,52 @@
     <Style Selector="Button.gear:pointerover">
       <Setter Property="Foreground" Value="#FFFFFFFF" />
     </Style>
+
+    <!-- The work-time readout shown in the timer pill. -->
+    <Style Selector="TextBlock.timertext">
+      <Setter Property="Foreground" Value="#E8FFFFFF" />
+      <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
   </UserControl.Styles>
 
-  <Border CornerRadius="21"
-          Background="#D90F1115"
-          BorderBrush="#26FFFFFF"
-          BorderThickness="1"
-          Padding="15,10"
-          HorizontalAlignment="Left"
-          VerticalAlignment="Top">
-    <Panel>
-      <!-- Collapsed: the single aggregate light (most-urgent colour + driving session's timer). -->
-      <views:DotsView DataContext="{Binding}" IsVisible="{Binding !IsExpanded}" />
+  <!-- Three separate elements stacked: the dots pill, then a row holding the timer pill (pinned to the
+       left edge) and the gear pill (pinned to the right edge), so the pair sits at the outer corners
+       under the dots. The row Grid stretches to the dots-pill width, so left/right line up with it. -->
+  <StackPanel Orientation="Vertical" Spacing="3" HorizontalAlignment="Left" VerticalAlignment="Top">
 
-      <!-- Expanded: one row per live session (dots + timer each) plus a settings gear at the edge. -->
-      <Grid IsVisible="{Binding IsExpanded}" ColumnDefinitions="*,Auto">
-        <ItemsControl Grid.Column="0" ItemsSource="{Binding Sessions}">
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-              <StackPanel Orientation="Vertical" Spacing="11" />
-            </ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <views:DotsView />
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+    <!-- Collapsed: the single aggregate dots pill (most-urgent colour). -->
+    <Border Classes="pill dots" IsVisible="{Binding !IsExpanded}">
+      <views:DotsView DataContext="{Binding}" />
+    </Border>
 
-        <Button Grid.Column="1" Classes="gear" Content="&#x2699;"
-                ToolTip.Tip="Settings" Click="OnGearClick" />
-      </Grid>
-    </Panel>
-  </Border>
+    <!-- Expanded: one dots pill per live session — same dots-only pill treatment so rows stay consistent. -->
+    <ItemsControl IsVisible="{Binding IsExpanded}" ItemsSource="{Binding Sessions}">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <StackPanel Orientation="Vertical" Spacing="6" />
+        </ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <Border Classes="pill dots">
+            <views:DotsView />
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <!-- Timer pill (left, always while a run is showing) + gear pill (right, on click). The Grid spans
+         the dots-pill width so the two chips align with the dots pill's left and right edges. -->
+    <Grid>
+      <Border Classes="pill timer" HorizontalAlignment="Left" IsVisible="{Binding HasTimer}">
+        <TextBlock Classes="timertext" Text="{Binding TimerText}" />
+      </Border>
+      <Border Classes="pill gear" HorizontalAlignment="Right" IsVisible="{Binding IsExpanded}">
+        <Button Classes="gear" Content="&#x2699;" ToolTip.Tip="Settings" Click="OnGearClick" />
+      </Border>
+    </Grid>
+  </StackPanel>
 </UserControl>

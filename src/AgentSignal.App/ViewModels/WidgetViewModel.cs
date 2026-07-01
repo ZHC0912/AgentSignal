@@ -76,22 +76,40 @@ public partial class WidgetViewModel : DotsViewModel
         AggregateState prev = State;
         State = Aggregate(sessions);
         TimerText = DrivingTimerText(sessions);
-        FireAlertsOnEdge(prev, State);
+        TickPulse(now);
+        FireAlerts(sessions, prev, State);
 
         if (sessions.Count == 0)
             IsExpanded = false; // nothing left to expand
     }
 
-    // Alert when the pill turns red (an agent needs permission) or a run finishes (→ green). Skip the
-    // very first poll so we don't alert merely because a session was already red/green at launch.
-    private void FireAlertsOnEdge(AggregateState prev, AggregateState next)
-    {
-        if (_alerts is null || _firstRefresh) { _firstRefresh = false; return; }
+    // Keys of sessions currently red that we've already alerted for — the per-session red debounce.
+    private readonly HashSet<string> _redAlerted = new();
 
-        if (next == AggregateState.Red && prev != AggregateState.Red)
-            _alerts.OnRed();
-        else if (next == AggregateState.Green && prev is AggregateState.Yellow or AggregateState.Red)
+    // Alerts. RED is per-session and debounced: each session firing its own OnRed the instant it
+    // enters red, so a SECOND session going red notifies even when the aggregate was already red, and
+    // a session can't repeat-fire while it sits red. GREEN stays an aggregate edge: the pill turning
+    // green means a run finished. The first poll only seeds state (so a session already red/green at
+    // launch doesn't alert).
+    private void FireAlerts(IReadOnlyList<SessionState> sessions, AggregateState prev, AggregateState next)
+    {
+        if (_alerts is null) { _firstRefresh = false; return; }
+
+        var currentlyRed = new HashSet<string>();
+        foreach (SessionState s in sessions)
+            if (s.State == "red") currentlyRed.Add(Key(s));
+
+        foreach (string key in currentlyRed)
+            if (_redAlerted.Add(key) && !_firstRefresh) // newly red this poll (Add seeds silently on first poll)
+                _alerts.OnRed(key);
+
+        // Drop keys no longer red so a later return to red re-fires.
+        _redAlerted.IntersectWith(currentlyRed);
+
+        if (!_firstRefresh && next == AggregateState.Green && prev is AggregateState.Yellow or AggregateState.Red)
             _alerts.OnGreen();
+
+        _firstRefresh = false;
     }
 
     private SessionRowViewModel? FindRow(string key)

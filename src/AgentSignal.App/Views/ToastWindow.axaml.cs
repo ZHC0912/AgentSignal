@@ -25,6 +25,7 @@ public partial class ToastWindow : Window
     {
         base.OnOpened(e);
         PlaceTopRight();
+        Services.AlertService.DebugLog($"toast shown: {TitleText.Text} — {BodyText.Text}");
 
         var timer = new DispatcherTimer { Interval = Lifetime };
         timer.Tick += (_, _) => { timer.Stop(); Close(); };

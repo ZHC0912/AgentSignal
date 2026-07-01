@@ -1,4 +1,5 @@
 using AgentSignal.App.Views;
+using AgentSignal.Core;
 using Avalonia.Threading;
 
 namespace AgentSignal.App.Services;
@@ -30,25 +31,46 @@ public sealed class AlertService
         _notifier = notifier;
     }
 
-    public void OnRed()
+    /// <param name="source">Optional session key, recorded in the debug trace so per-session red
+    /// alerts (and their debounce) are attributable; it isn't shown in the notification.</param>
+    public void OnRed(string? source = null)
     {
         if (!ConfigService.Instance.Current.AlertOnRed) return;
-        Fire("Agent needs permission");
+        Fire("Agent needs permission", source);
     }
 
-    public void OnGreen()
+    public void OnGreen(string? source = null)
     {
         if (!ConfigService.Instance.Current.AlertOnGreen) return;
-        Fire("Run finished");
+        Fire("Run finished", source);
     }
 
     /// <summary>Fire both channels regardless of toggles — used by the settings "Test" button.</summary>
-    public void Test() => Fire("Test alert");
+    public void Test() => Fire("Test alert", null);
 
-    private void Fire(string message)
+    private void Fire(string message, string? source)
     {
         _sound.PlayAlert();
         _notifier.Notify("AgentSignal", message);
+        DebugLog($"alert dispatched: \"{message}\"{(source is null ? "" : $" [{source}]")} (sound + notification)");
+    }
+
+    /// <summary>
+    /// Opt-in trace of the alert path to ~/.agentsignal/alerts.log, gated by AGENTSIGNAL_DEBUG=1 (the
+    /// same switch the writer uses). Off by default so it never touches disk in normal use; when on it
+    /// lets a live red/green be confirmed without an audio/screen capture. Also called by the toast on
+    /// open, so the log shows the notification actually surfaced, not merely that it was requested.
+    /// </summary>
+    internal static void DebugLog(string line)
+    {
+        if (Environment.GetEnvironmentVariable("AGENTSIGNAL_DEBUG") != "1") return;
+        try
+        {
+            AgentPaths.EnsureRoot();
+            File.AppendAllText(Path.Combine(AgentPaths.Root, "alerts.log"),
+                $"{DateTimeOffset.Now:HH:mm:ss.fff} {line}{Environment.NewLine}");
+        }
+        catch { /* diagnostics must never affect the app */ }
     }
 }
 

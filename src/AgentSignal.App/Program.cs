@@ -16,7 +16,9 @@ internal static class Program
     //   --screenshot <path>  render a static preview PNG (no display needed)
     //   --dump               print the live sessions + aggregate colour and exit (diagnostic)
     //   --timer-test         replay the §8 permission scenario through the real WorkTimer (diagnostic)
+    //   --blink-test         drive a real SessionRowViewModel to prove the green-blink start/cancel/settle
     //   --watch [seconds]    run the real reconcile loop over live files, printing the model (diagnostic)
+    //   --startup <on|off|status>  toggle/inspect the real launch-on-startup entry (diagnostic)
     //   (no args)            run the always-on-top widget
     [STAThread]
     public static int Main(string[] args)
@@ -30,6 +32,9 @@ internal static class Program
         if (args.Length >= 1 && args[0] == "--timer-test")
             return TimerTest();
 
+        if (args.Length >= 1 && args[0] == "--blink-test")
+            return BlinkTest();
+
         if (args.Length >= 1 && args[0] == "--watch")
             return WatchLive(args.Length >= 2 && int.TryParse(args[1], out int s) ? s : 30);
 
@@ -39,7 +44,26 @@ internal static class Program
         if (args.Length >= 2 && args[0] == "--settings-demo")
             return SettingsDemo(args[1]);
 
+        if (args.Length >= 1 && args[0] == "--startup")
+            return StartupDiag(args.Length >= 2 ? args[1] : "status");
+
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        return 0;
+    }
+
+    // Exercises the real launch-on-startup manager and prints the actual OS state. On Windows this
+    // adds/removes/reads the HKCU\…\Run value, so it confirms the registered command (which must use
+    // the ~/.dotnet host since plain "dotnet" on PATH is 9.0 here and can't run the net10 app).
+    private static int StartupDiag(string action)
+    {
+        switch (action.ToLowerInvariant())
+        {
+            case "on": StartupManager.Current.SetEnabled(true); break;
+            case "off": StartupManager.Current.SetEnabled(false); break;
+            case "status": break;
+            default: Console.Error.WriteLine("usage: --startup <on|off|status>"); return 1;
+        }
+        Console.WriteLine($"launch-on-startup registered: {StartupManager.Current.IsEnabled()}");
         return 0;
     }
 
@@ -62,7 +86,8 @@ internal static class Program
                 foreach (var r in vm.Sessions)
                 {
                     string mode = r.IsYellowActive ? "running" : r.IsRedActive ? "paused" : "frozen/idle";
-                    Console.WriteLine($"    {r.SessionId,-38} {r.State,-6} {(r.HasTimer ? r.TimerText : "-"),-7} {mode}");
+                    string blink = r.IsGreenPulsing ? " blink=ON" : "";
+                    Console.WriteLine($"    {r.SessionId,-38} {r.State,-6} {(r.HasTimer ? r.TimerText : "-"),-7} {mode}{blink}");
                 }
             }
             System.Threading.Thread.Sleep(250);
@@ -185,6 +210,43 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine("expected at PostToolUse: 1:10  = 40s yellow + 30s approved-tool exec; the ~2min wait is excluded.");
         Console.WriteLine("(real PostToolUse durations captured this session include e.g. 594ms, 6942ms, 10774ms.)");
+        return 0;
+    }
+
+    // Drives the REAL SessionRowViewModel through the green-blink lifecycle, printing IsGreenPulsing at
+    // each step. Deterministic (no UI, no timing race): cancellation is synchronous on the state edge,
+    // and auto-settle uses a real sleep past the configured window.
+    private static int BlinkTest()
+    {
+        double secs = Math.Clamp(ConfigService.Instance.Current.BlinkOnGreenSeconds, 0, 5);
+        Console.WriteLine($"green-blink test (BlinkOnGreenSeconds={secs})");
+        var row = new SessionRowViewModel("claude", "blink");
+
+        SessionState S(string state, string evt) => new()
+        {
+            Tool = "claude", SessionId = "blink", State = state, Event = evt,
+            Ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        };
+
+        row.Observe(S("yellow", "UserPromptSubmit"), DateTime.UtcNow);
+        Console.WriteLine($"  working (yellow)           IsGreenPulsing={row.IsGreenPulsing,-5}  expect False");
+
+        row.Observe(S("green", "Stop"), DateTime.UtcNow);
+        Console.WriteLine($"  run finished -> green      IsGreenPulsing={row.IsGreenPulsing,-5}  expect {secs > 0}");
+
+        // Cancellation: a new run begins before the window elapses -> blink must clear at once.
+        row.Observe(S("yellow", "UserPromptSubmit"), DateTime.UtcNow);
+        Console.WriteLine($"  green->yellow (new run)    IsGreenPulsing={row.IsGreenPulsing,-5}  expect False (cancelled mid-blink)");
+
+        if (secs > 0)
+        {
+            row.Observe(S("green", "Stop"), DateTime.UtcNow);
+            Console.WriteLine($"  re-enter green             IsGreenPulsing={row.IsGreenPulsing,-5}  expect True");
+            System.Threading.Thread.Sleep((int)(secs * 1000) + 400);
+            row.Observe(S("green", "Stop"), DateTime.UtcNow); // a later poll, still green
+            Console.WriteLine($"  poll {secs}s later (steady)  IsGreenPulsing={row.IsGreenPulsing,-5}  expect False (auto-settled)");
+        }
+        Console.WriteLine("(set BlinkOnGreenSeconds=0 in settings to disable the blink entirely.)");
         return 0;
     }
 

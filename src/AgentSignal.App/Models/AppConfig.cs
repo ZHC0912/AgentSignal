@@ -20,8 +20,11 @@ public sealed class AppConfig
     public bool AlertOnGreen { get; set; }         // optional: when a run finishes
 
     // Appearance.
-    public double Scale { get; set; } = 1.0;       // whole-widget scale (0.6–2.0)
+    public double Scale { get; set; } = 1.0;       // whole-widget scale (0.6–3.0)
     public double Opacity { get; set; } = 1.0;     // whole-widget translucency (0.2–1.0)
+
+    // Visual feedback.
+    public double BlinkOnGreenSeconds { get; set; } = 2.0; // pulse the green dot this long on entering green (0 = off, 0–5s)
 
     // Behaviour.
     public bool LockPosition { get; set; }         // when true, ignore drags

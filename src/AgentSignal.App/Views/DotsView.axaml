@@ -3,12 +3,24 @@
              x:Class="AgentSignal.App.Views.DotsView">
 
   <UserControl.Styles>
+    <!-- Each dot lives centred in a larger TRANSPARENT cell. The cell matters: Avalonia clips a
+         control's BoxShadow to its arrange slot, and a bare dot's slot is only 15×15 — which cut the
+         soft round glow into a hard square. Sizing the cell to ~3× the dot gives the glow room to fade
+         out fully inside it, so it renders as a round halo with no box edge. -->
+    <Style Selector="Border.cell">
+      <Setter Property="Width" Value="44" />
+      <Setter Property="Height" Value="44" />
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+
     <!-- A dot is dim by default; the active one lights up to full opacity with a soft colour glow. -->
     <Style Selector="Border.dot">
       <Setter Property="Width" Value="15" />
       <Setter Property="Height" Value="15" />
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="Opacity" Value="0.18" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style Selector="Border.green">
       <Setter Property="Background" Value="{DynamicResource GreenBrush}" />
@@ -32,20 +44,35 @@
     <Style Selector="Border.red.active">
       <Setter Property="BoxShadow" Value="{DynamicResource RedGlow}" />
     </Style>
+
+    <!-- Reusable per-state pulse: a smooth sine fade of the lit dot (and its coloured glow) so it
+         appears to swell in and out — a soft glow-pulse, not a hard strobe. Driven by a per-state
+         pulsing flag; today only the green dot binds it (IsGreenPulsing, set on entering green). When
+         the flag clears the animation stops and the dot settles back to its steady glow. Opacity-only
+         on purpose: it needs no transform animator and never reflows the row. -->
+    <Style Selector="Border.dot.pulse">
+      <Style.Animations>
+        <Animation Duration="0:0:1.1" IterationCount="INFINITE" Easing="SineEaseInOut">
+          <KeyFrame Cue="0%"><Setter Property="Opacity" Value="1.0" /></KeyFrame>
+          <KeyFrame Cue="50%"><Setter Property="Opacity" Value="0.4" /></KeyFrame>
+          <KeyFrame Cue="100%"><Setter Property="Opacity" Value="1.0" /></KeyFrame>
+        </Animation>
+      </Style.Animations>
+    </Style>
   </UserControl.Styles>
 
-  <StackPanel Orientation="Vertical" Spacing="3" HorizontalAlignment="Center">
-    <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
-      <Border Classes="dot green"  Classes.active="{Binding IsGreenActive}" />
+  <!-- Dots only. The work-time timer lives in its own detached pill in PillView (below the dots),
+       so this control is a fixed dots-only cell reused by both the aggregate pill and each session row. -->
+  <StackPanel Orientation="Horizontal" Spacing="0" HorizontalAlignment="Center">
+    <Border Classes="cell">
+      <Border Classes="dot green"  Classes.active="{Binding IsGreenActive}"
+              Classes.pulse="{Binding IsGreenPulsing}" />
+    </Border>
+    <Border Classes="cell">
       <Border Classes="dot yellow" Classes.active="{Binding IsYellowActive}" />
+    </Border>
+    <Border Classes="cell">
       <Border Classes="dot red"    Classes.active="{Binding IsRedActive}" />
-    </StackPanel>
-    <!-- Active work time, directly under the dots (m:ss / h:mm:ss). -->
-    <TextBlock Text="{Binding TimerText}"
-               IsVisible="{Binding HasTimer}"
-               Foreground="#E8FFFFFF"
-               FontFamily="Consolas, Menlo, monospace"
-               FontSize="12"
-               HorizontalAlignment="Center" />
+    </Border>
   </StackPanel>
 </UserControl>

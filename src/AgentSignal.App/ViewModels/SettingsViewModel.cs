@@ -26,6 +26,7 @@ public partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty] private double _scale;
     [ObservableProperty] private double _opacity;
+    [ObservableProperty] private double _blinkOnGreenSeconds;
 
     [ObservableProperty] private bool _lockPosition;
     [ObservableProperty] private bool _launchOnStartup;
@@ -47,6 +48,7 @@ public partial class SettingsViewModel : ObservableObject
         AlertOnGreen = c.AlertOnGreen;
         Scale = c.Scale;
         Opacity = c.Opacity;
+        BlinkOnGreenSeconds = c.BlinkOnGreenSeconds;
         LockPosition = c.LockPosition;
         LaunchOnStartup = StartupManager.Current.IsEnabled(); // reflect the real OS state
         _loading = false;
@@ -59,6 +61,7 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnAlertOnGreenChanged(bool value) => Push(c => c.AlertOnGreen = value);
     partial void OnScaleChanged(double value) => Push(c => c.Scale = Math.Round(value, 2));
     partial void OnOpacityChanged(double value) => Push(c => c.Opacity = Math.Round(value, 2));
+    partial void OnBlinkOnGreenSecondsChanged(double value) => Push(c => c.BlinkOnGreenSeconds = Math.Round(Math.Clamp(value, 0, 5)));
     partial void OnLockPositionChanged(bool value) => Push(c => c.LockPosition = value);
 
     partial void OnLaunchOnStartupChanged(bool value)

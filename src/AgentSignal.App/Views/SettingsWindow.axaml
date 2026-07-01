@@ -70,7 +70,7 @@
     <StackPanel Spacing="6">
       <StackPanel Orientation="Horizontal" Spacing="10">
         <TextBlock Classes="label" Text="Size" />
-        <Slider Width="210" Minimum="0.6" Maximum="2.0" Value="{Binding Scale}" />
+        <Slider Width="210" Minimum="0.6" Maximum="3.0" Value="{Binding Scale}" />
         <TextBlock Width="46" Foreground="#CCFFFFFF" VerticalAlignment="Center"
                    Text="{Binding Scale, StringFormat={}{0:0.00}x}" />
       </StackPanel>
@@ -79,6 +79,14 @@
         <Slider Width="210" Minimum="0.2" Maximum="1.0" Value="{Binding Opacity}" />
         <TextBlock Width="46" Foreground="#CCFFFFFF" VerticalAlignment="Center"
                    Text="{Binding Opacity, StringFormat={}{0:0%}}" />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <TextBlock Classes="label" Text="Blink on green for" />
+        <Slider Width="210" Minimum="0" Maximum="5"
+                IsSnapToTickEnabled="True" TickFrequency="1"
+                Value="{Binding BlinkOnGreenSeconds}" />
+        <TextBlock Width="46" Foreground="#CCFFFFFF" VerticalAlignment="Center"
+                   Text="{Binding BlinkOnGreenSeconds, StringFormat={}{0:0}s}" />
       </StackPanel>
     </StackPanel>
 

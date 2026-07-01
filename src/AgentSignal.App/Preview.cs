@@ -58,8 +58,10 @@ internal static class Preview
             rows.Children.Add(row);
         }
 
-        // Expanded view: click the pill and it grows to one row per live session (dots + timer each).
-        var expandedVm = new WidgetViewModel(live: false) { IsExpanded = true };
+        // Expanded view: click the pill and it grows to one dots pill per live session (dots-only,
+        // consistent with the collapsed pill); the gear pill is revealed and the timer pill shows the
+        // driving session's time.
+        var expandedVm = new WidgetViewModel(live: false) { IsExpanded = true, TimerText = "0:48" };
         expandedVm.Sessions.Add(new SessionRowViewModel("claude", "alpha") { State = AggregateState.Red, TimerText = "0:48" });
         expandedVm.Sessions.Add(new SessionRowViewModel("claude", "bravo") { State = AggregateState.Yellow, TimerText = "2:03" });
         var expandedRow = new StackPanel
@@ -71,13 +73,41 @@ internal static class Preview
         expandedRow.Children.Add(new PillView { DataContext = expandedVm, VerticalAlignment = VerticalAlignment.Center });
         expandedRow.Children.Add(new TextBlock
         {
-            Text = "expanded — two sessions at once (red waiting + yellow working)",
+            Text = "expanded — two sessions (per-session dots pills) + gear pill on click",
             Foreground = Brushes.White,
             Opacity = 0.85,
             FontSize = 15,
             VerticalAlignment = VerticalAlignment.Center,
         });
         rows.Children.Add(expandedRow);
+
+        // Max scale (3×): the whole widget scaled by the same layout transform the live window uses, to
+        // confirm the dots/glow/timer stay crisp (vector-scaled) and each dot's glow is a round halo
+        // (no square clip) at max scale.
+        var scaledVm = new WidgetViewModel(live: false) { IsExpanded = true, TimerText = "0:48" };
+        scaledVm.Sessions.Add(new SessionRowViewModel("claude", "alpha") { State = AggregateState.Green, TimerText = "0:48" });
+        scaledVm.Sessions.Add(new SessionRowViewModel("claude", "bravo") { State = AggregateState.Red, TimerText = "2:03" });
+        var scaledRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 18,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        scaledRow.Children.Add(new LayoutTransformControl
+        {
+            LayoutTransform = new ScaleTransform(3.0, 3.0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new PillView { DataContext = scaledVm },
+        });
+        scaledRow.Children.Add(new TextBlock
+        {
+            Text = "3× scale — round glow, timer pinned left + gear pinned right, aligned to pill edges",
+            Foreground = Brushes.White,
+            Opacity = 0.85,
+            FontSize = 15,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        rows.Children.Add(scaledRow);
 
         var content = new StackPanel
         {
