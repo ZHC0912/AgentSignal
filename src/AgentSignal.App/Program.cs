@@ -26,6 +26,9 @@ internal static class Program
         if (args.Length >= 2 && args[0] == "--screenshot")
             return Preview.Render(args[1]);
 
+        if (args.Length >= 2 && args[0] == "--layout")
+            return Preview.RenderLayouts(args[1]);
+
         if (args.Length >= 1 && args[0] == "--dump")
             return Dump();
 

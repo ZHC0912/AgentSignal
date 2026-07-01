@@ -1,4 +1,5 @@
 using AgentSignal.App.Services;
+using Avalonia.Layout;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace AgentSignal.App.ViewModels;
@@ -24,6 +25,11 @@ public abstract partial class DotsViewModel : ObservableObject
     /// <summary>True while the green dot should blink (a run just finished); drives the .pulse style.</summary>
     [ObservableProperty]
     private bool _isGreenPulsing;
+
+    /// <summary>Lay the three dots out in a row (Horizontal) or a column (Vertical). Set from config by
+    /// <see cref="WidgetViewModel"/> and propagated to each session row so every DotsView matches.</summary>
+    [ObservableProperty]
+    private Orientation _dotsOrientation = Orientation.Horizontal;
 
     private DateTime _pulseUntilUtc = DateTime.MinValue;
 

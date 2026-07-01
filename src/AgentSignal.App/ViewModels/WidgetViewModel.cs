@@ -1,6 +1,10 @@
 using System.Collections.ObjectModel;
+using AgentSignal.App.Models;
 using AgentSignal.App.Services;
 using AgentSignal.Core;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Layout;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 
@@ -10,14 +14,20 @@ namespace AgentSignal.App.ViewModels;
 /// Drives the pill. Polls the sessions directory every ~250ms and maintains both views:
 /// the collapsed aggregate (most-urgent colour — red &gt; yellow &gt; green, else off — plus the
 /// driving session's timer), and a live <see cref="Sessions"/> list for the expanded view that is
-/// reconciled in place (no rebuild → no flicker). A clean click toggles <see cref="IsExpanded"/>.
+/// reconciled in place (no rebuild → no flicker). The multi-session view is <b>automatic</b>
+/// (<see cref="IsExpanded"/> = more than one live session); a clean click on the dots instead toggles
+/// the settings gear (<see cref="IsGearVisible"/>). Also owns the widget layout the view binds to:
+/// dot direction (<see cref="DotsViewModel.DotsOrientation"/>) and where the timer/gear pills attach
+/// (<see cref="AttachDock"/>), plus the collapsible-timer state (<see cref="IsTimerCollapsed"/>).
 /// </summary>
 public partial class WidgetViewModel : DotsViewModel
 {
     private readonly SessionReader _reader = new();
     private readonly DispatcherTimer? _timer;
     private readonly AlertService? _alerts;
+    private readonly bool _live;
     private bool _firstRefresh = true;
+    private bool _initializing;
 
     /// <summary>One row per live session, reused across polls so the expanded list never flickers.</summary>
     public ObservableCollection<SessionRowViewModel> Sessions { get; } = new();
@@ -25,8 +35,39 @@ public partial class WidgetViewModel : DotsViewModel
     [ObservableProperty]
     private int _sessionCount;
 
+    /// <summary>Automatic: true whenever more than one session is live (per-session rows), else the
+    /// single aggregate pill. No longer driven by clicks.</summary>
     [ObservableProperty]
     private bool _isExpanded;
+
+    /// <summary>The settings gear is revealed by clicking the dots (independent of sessions).</summary>
+    [ObservableProperty]
+    private bool _isGearVisible;
+
+    // Vertical (dots stacked in a column) vs horizontal (a row). Driven from config, applied live.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AttachDock))]
+    [NotifyPropertyChangedFor(nameof(AttachMargin))]
+    [NotifyPropertyChangedFor(nameof(SessionsStackOrientation))]
+    [NotifyPropertyChangedFor(nameof(TimerHorizontal))]
+    [NotifyPropertyChangedFor(nameof(TimerVertical))]
+    [NotifyPropertyChangedFor(nameof(GearHorizontal))]
+    [NotifyPropertyChangedFor(nameof(GearVertical))]
+    private bool _isVertical;
+
+    // Smart pill direction (Behaviour B): the window sets this true when the widget is near the far
+    // edge, so the attached pills open inward (toward the screen) instead of clipping off it.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AttachDock))]
+    [NotifyPropertyChangedFor(nameof(AttachMargin))]
+    private bool _attachFlip;
+
+    // Timer collapsed behind its chevron. Visual only — the underlying WorkTimer keeps counting — and
+    // persisted so it survives a relaunch.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsTimerShown))]
+    [NotifyPropertyChangedFor(nameof(IsTimerChevronShown))]
+    private bool _isTimerCollapsed;
 
     /// <param name="alerts">Optional alert service; when supplied, red/green aggregate edges fire alerts.</param>
     /// <param name="live">
@@ -36,12 +77,78 @@ public partial class WidgetViewModel : DotsViewModel
     public WidgetViewModel(AlertService? alerts = null, bool live = true)
     {
         _alerts = alerts;
+        _live = live;
+
+        // Seed layout state from config so the very first render is already correct (the window pushes
+        // live changes later). Guard the persist hook so seeding doesn't write back to disk.
+        _initializing = true;
+        AppConfig cfg = ConfigService.Instance.Current;
+        IsVertical = string.Equals(cfg.Orientation, "Vertical", StringComparison.OrdinalIgnoreCase);
+        IsTimerCollapsed = cfg.TimerCollapsed;
+        _initializing = false;
+
+        // The timer/chevron visibility depends on both whether there's a value (HasTimer, which tracks
+        // TimerText) and the collapse state — keep the two derived flags in sync as either changes.
+        PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(HasTimer) or nameof(TimerText))
+            {
+                OnPropertyChanged(nameof(IsTimerShown));
+                OnPropertyChanged(nameof(IsTimerChevronShown));
+            }
+        };
+
         if (!live) return;
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _timer.Tick += (_, _) => Refresh();
         _timer.Start();
         Refresh();
+    }
+
+    // ---- Layout the view binds to ------------------------------------------------------------------
+    // Where the timer/gear pills attach relative to the dots. Horizontal: below normally, above when
+    // near the bottom edge. Vertical: to the right normally, to the left when near the right edge.
+    public Dock AttachDock => IsVertical
+        ? (AttachFlip ? Dock.Left : Dock.Right)
+        : (AttachFlip ? Dock.Top : Dock.Bottom);
+
+    /// <summary>A small gap between the dots and the attached pills, on the facing side only.</summary>
+    public Thickness AttachMargin => AttachDock switch
+    {
+        Dock.Bottom => new Thickness(0, 3, 0, 0),
+        Dock.Top => new Thickness(0, 0, 0, 3),
+        Dock.Right => new Thickness(3, 0, 0, 0),
+        Dock.Left => new Thickness(0, 0, 3, 0),
+        _ => default,
+    };
+
+    /// <summary>Multiple session rows stack across the dots axis (rows when horizontal, columns when vertical).</summary>
+    public Orientation SessionsStackOrientation => IsVertical ? Orientation.Horizontal : Orientation.Vertical;
+
+    // Timer pinned to the "start" of the attach strip, gear to the "end", so they sit at opposite
+    // corners of the dots (left/right when horizontal; top/bottom when vertical).
+    public HorizontalAlignment TimerHorizontal => IsVertical ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+    public VerticalAlignment TimerVertical => IsVertical ? VerticalAlignment.Top : VerticalAlignment.Center;
+    public HorizontalAlignment GearHorizontal => IsVertical ? HorizontalAlignment.Center : HorizontalAlignment.Right;
+    public VerticalAlignment GearVertical => IsVertical ? VerticalAlignment.Bottom : VerticalAlignment.Center;
+
+    // The timer slot shows the readout, or a chevron once collapsed — but only when there's a value.
+    public bool IsTimerShown => HasTimer && !IsTimerCollapsed;
+    public bool IsTimerChevronShown => HasTimer && IsTimerCollapsed;
+
+    partial void OnIsVerticalChanged(bool value)
+    {
+        Orientation o = value ? Orientation.Vertical : Orientation.Horizontal;
+        DotsOrientation = o;
+        foreach (SessionRowViewModel row in Sessions)
+            row.DotsOrientation = o;
+    }
+
+    partial void OnIsTimerCollapsedChanged(bool value)
+    {
+        if (_initializing || !_live) return;
+        ConfigService.Instance.Update(c => c.TimerCollapsed = value); // persist across relaunch
     }
 
     /// <summary>Run one poll/reconcile cycle. Used by the live timer and by the --watch diagnostic.</summary>
@@ -62,7 +169,7 @@ public partial class WidgetViewModel : DotsViewModel
             SessionRowViewModel? row = FindRow(key);
             if (row is null)
             {
-                row = new SessionRowViewModel(s.Tool, s.SessionId);
+                row = new SessionRowViewModel(s.Tool, s.SessionId) { DotsOrientation = DotsOrientation };
                 Sessions.Add(row);
             }
             row.Observe(s, now);
@@ -72,15 +179,13 @@ public partial class WidgetViewModel : DotsViewModel
                 Sessions.RemoveAt(i);
 
         SessionCount = sessions.Count;
+        IsExpanded = sessions.Count > 1; // per-session rows appear automatically for 2+ sessions
 
         AggregateState prev = State;
         State = Aggregate(sessions);
         TimerText = DrivingTimerText(sessions);
         TickPulse(now);
         FireAlerts(sessions, prev, State);
-
-        if (sessions.Count == 0)
-            IsExpanded = false; // nothing left to expand
     }
 
     // Keys of sessions currently red that we've already alerted for — the per-session red debounce.

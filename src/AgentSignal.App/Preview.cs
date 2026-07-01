@@ -17,6 +17,87 @@ namespace AgentSignal.App;
 /// </summary>
 internal static class Preview
 {
+    /// <summary>
+    /// Focused render of just the orientation / smart-direction / collapsible-timer matrix, laid out in
+    /// a grid so every case is fully visible. Invoked with: AgentSignal.App --layout &lt;path&gt;.
+    /// </summary>
+    public static int RenderLayouts(string outPath)
+    {
+        AppBuilder.Configure<App>()
+            .UseSkia()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .WithInterFont()
+            .SetupWithoutStarting();
+        Services.ThemeService.Apply(Services.ConfigService.Instance.Current);
+
+        static WidgetViewModel Vm(bool vertical, bool flip, bool collapsed, bool gear)
+        {
+            var vm = new WidgetViewModel(live: false) { State = AggregateState.Yellow, TimerText = "1:10", IsGearVisible = gear };
+            vm.IsVertical = vertical;
+            vm.AttachFlip = flip;
+            vm.IsTimerCollapsed = collapsed;
+            return vm;
+        }
+
+        (WidgetViewModel vm, string label)[] cases =
+        {
+            (Vm(false, false, false, true),  "horizontal · gear revealed\ntimer below-left, gear below-right"),
+            (Vm(false, true,  false, true),  "horizontal near BOTTOM\npills flip ABOVE the dots"),
+            (Vm(false, false, true,  true),  "horizontal · timer collapsed\nchevron in timer slot, gear kept"),
+            (Vm(true,  false, false, true),  "vertical · gear revealed\ndots column, pills to the RIGHT"),
+            (Vm(true,  true,  false, true),  "vertical near RIGHT edge\npills flip to the LEFT"),
+            (Vm(true,  false, true,  true),  "vertical · timer collapsed\nchevron beside the column"),
+        };
+
+        var grid = new Avalonia.Controls.Primitives.UniformGrid { Columns = 3, Margin = new Thickness(4) };
+        foreach ((WidgetViewModel vm, string label) in cases)
+        {
+            var cell = new StackPanel { Spacing = 10, Margin = new Thickness(14), VerticalAlignment = VerticalAlignment.Top };
+            cell.Children.Add(new Border
+            {
+                Height = 180,
+                Background = new SolidColorBrush(Color.Parse("#12141A")),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(12),
+                Child = new PillView { DataContext = vm, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+            });
+            cell.Children.Add(new TextBlock { Text = label, Foreground = Brushes.White, Opacity = 0.8, FontSize = 13, TextWrapping = TextWrapping.Wrap });
+            grid.Children.Add(cell);
+        }
+
+        var content = new StackPanel
+        {
+            Spacing = 12,
+            Margin = new Thickness(24),
+            Children =
+            {
+                new TextBlock { Text = "Orientation · smart pill direction · collapsible timer", Foreground = Brushes.White, FontSize = 18, FontWeight = FontWeight.SemiBold },
+                grid,
+            },
+        };
+
+        var window = new Window
+        {
+            SystemDecorations = SystemDecorations.None,
+            Background = new SolidColorBrush(Color.Parse("#1B1D23")),
+            SizeToContent = SizeToContent.WidthAndHeight,
+            CanResize = false,
+            Content = content,
+        };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
+
+        var frame = window.CaptureRenderedFrame();
+        if (frame is null) { Console.Error.WriteLine("layout preview: no frame captured"); return 1; }
+        string full = Path.GetFullPath(outPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        using (FileStream fs = File.Create(full)) frame.Save(fs);
+        Console.WriteLine($"saved layout preview {full} ({frame.PixelSize.Width}x{frame.PixelSize.Height})");
+        return 0;
+    }
+
     public static int Render(string outPath)
     {
         AppBuilder.Configure<App>()
@@ -108,6 +189,48 @@ internal static class Preview
             VerticalAlignment = VerticalAlignment.Center,
         });
         rows.Children.Add(scaledRow);
+
+        // Orientation + smart pill-direction + collapsible-timer matrix (this change set). Each pill is
+        // configured directly (the live widget derives the same flags from config + screen position).
+        static WidgetViewModel Layout(bool vertical, bool flip, bool collapsed)
+        {
+            var vm = new WidgetViewModel(live: false)
+            {
+                State = AggregateState.Yellow,
+                TimerText = "1:10",
+                IsGearVisible = true,
+            };
+            vm.IsVertical = vertical;
+            vm.AttachFlip = flip;
+            vm.IsTimerCollapsed = collapsed;
+            return vm;
+        }
+
+        (WidgetViewModel vm, string label)[] layouts =
+        {
+            (Layout(false, false, false), "horizontal — timer below-left, gear below-right"),
+            (Layout(false, true,  false), "horizontal near BOTTOM edge — pills flip ABOVE"),
+            (Layout(false, false, true),  "horizontal — timer collapsed to a chevron (gear kept)"),
+            (Layout(true,  false, false), "vertical — dots in a column, pills to the RIGHT"),
+            (Layout(true,  true,  false), "vertical near RIGHT edge — pills flip LEFT"),
+            (Layout(true,  false, true),  "vertical — timer collapsed to a chevron"),
+        };
+        rows.Children.Add(new TextBlock
+        {
+            Text = "Orientation · smart direction · collapsible timer",
+            Foreground = Brushes.White, Opacity = 0.6, FontSize = 13, Margin = new Thickness(0, 8, 0, 0),
+        });
+        foreach ((WidgetViewModel vm, string label) in layouts)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 18, VerticalAlignment = VerticalAlignment.Center };
+            row.Children.Add(new Border
+            {
+                Width = 120, // fixed cell so the differing widget shapes line their labels up
+                Child = new PillView { DataContext = vm, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+            });
+            row.Children.Add(new TextBlock { Text = label, Foreground = Brushes.White, Opacity = 0.85, FontSize = 15, VerticalAlignment = VerticalAlignment.Center });
+            rows.Children.Add(row);
+        }
 
         var content = new StackPanel
         {

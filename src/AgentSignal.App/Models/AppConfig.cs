@@ -22,6 +22,10 @@ public sealed class AppConfig
     // Appearance.
     public double Scale { get; set; } = 1.0;       // whole-widget scale (0.6–3.0)
     public double Opacity { get; set; } = 1.0;     // whole-widget translucency (0.2–1.0)
+    public string Orientation { get; set; } = "Horizontal"; // "Horizontal" (dots in a row) or "Vertical" (a column)
+
+    // Widget interaction state that should survive a relaunch.
+    public bool TimerCollapsed { get; set; }       // timer hidden behind its chevron (visual only; timer keeps counting)
 
     // Visual feedback.
     public double BlinkOnGreenSeconds { get; set; } = 2.0; // pulse the green dot this long on entering green (0 = off, 0–5s)

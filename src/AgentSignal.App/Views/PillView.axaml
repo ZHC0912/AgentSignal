@@ -4,20 +4,18 @@
              x:Class="AgentSignal.App.Views.PillView">
 
   <UserControl.Styles>
-    <!-- Detached pill base shared by the dots pill, the timer pill and the gear pill. Each is its own
-         rounded, translucent chip. -->
+    <!-- Detached pill base shared by the dots pill, the timer pill and the gear/chevron pill. Each is
+         its own rounded, translucent chip. -->
     <Style Selector="Border.pill">
       <Setter Property="Background" Value="#D90F1115" />
       <Setter Property="BorderBrush" Value="#26FFFFFF" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="VerticalAlignment" Value="Top" />
     </Style>
     <!-- Dots pill: fixed rounded pill. Padding is modest because each dot's glow is contained inside its
          own transparent cell (see DotsView), so nothing clips at the pill edge. -->
     <Style Selector="Border.pill.dots">
       <Setter Property="CornerRadius" Value="21" />
       <Setter Property="Padding" Value="8,2" />
-      <Setter Property="HorizontalAlignment" Value="Left" />
     </Style>
     <!-- Timer and gear pills are a matched pair: identical corner radius, padding and height. -->
     <Style Selector="Border.pill.timer, Border.pill.gear">
@@ -26,28 +24,43 @@
       <Setter Property="MinHeight" Value="22" />
     </Style>
 
-    <!-- Settings gear button that sits inside the gear pill. Sized to match the timer text so the two
-         chips are the same height. -->
-    <Style Selector="Button.gear">
+    <!-- Flat, click-consuming button used for the timer, its chevron and the gear. Being a Button, it
+         captures its own pointer press, so the window's dots-click (reveal gear) never fires for it —
+         each control affects only itself. All chrome is stripped so the pill Border owns the look. -->
+    <Style Selector="Button.flat">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="Margin" Value="0" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="MinWidth" Value="0" />
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="VerticalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.flat /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.flat:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.flat:pressed /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <!-- Icon glyphs (gear, chevron) rendered from an icon font. -->
+    <Style Selector="Button.glyph">
       <Setter Property="Foreground" Value="#B0FFFFFF" />
       <Setter Property="FontSize" Value="13" />
       <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe UI Symbol, Inter" />
-      <Setter Property="Cursor" Value="Hand" />
     </Style>
-    <Style Selector="Button.gear:pointerover /template/ ContentPresenter">
-      <Setter Property="Background" Value="Transparent" />
-    </Style>
-    <Style Selector="Button.gear:pointerover">
+    <Style Selector="Button.glyph:pointerover">
       <Setter Property="Foreground" Value="#FFFFFFFF" />
     </Style>
 
-    <!-- The work-time readout shown in the timer pill. -->
+    <!-- The work-time readout shown in the timer pill. Always horizontal/readable in both orientations. -->
     <Style Selector="TextBlock.timertext">
       <Setter Property="Foreground" Value="#E8FFFFFF" />
       <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
@@ -57,41 +70,58 @@
     </Style>
   </UserControl.Styles>
 
-  <!-- Three separate elements stacked: the dots pill, then a row holding the timer pill (pinned to the
-       left edge) and the gear pill (pinned to the right edge), so the pair sits at the outer corners
-       under the dots. The row Grid stretches to the dots-pill width, so left/right line up with it. -->
-  <StackPanel Orientation="Vertical" Spacing="3" HorizontalAlignment="Left" VerticalAlignment="Top">
+  <!-- The dots block plus an attach strip (timer/chevron + gear). The strip docks to whichever edge the
+       VM chose (AttachDock) — below/above the dots when horizontal, right/left when vertical — so the
+       pills always open toward the screen. The dots block fills the remaining space. -->
+  <DockPanel LastChildFill="True" HorizontalAlignment="Left" VerticalAlignment="Top">
 
-    <!-- Collapsed: the single aggregate dots pill (most-urgent colour). -->
-    <Border Classes="pill dots" IsVisible="{Binding !IsExpanded}">
-      <views:DotsView DataContext="{Binding}" />
-    </Border>
-
-    <!-- Expanded: one dots pill per live session — same dots-only pill treatment so rows stay consistent. -->
-    <ItemsControl IsVisible="{Binding IsExpanded}" ItemsSource="{Binding Sessions}">
-      <ItemsControl.ItemsPanel>
-        <ItemsPanelTemplate>
-          <StackPanel Orientation="Vertical" Spacing="6" />
-        </ItemsPanelTemplate>
-      </ItemsControl.ItemsPanel>
-      <ItemsControl.ItemTemplate>
-        <DataTemplate>
-          <Border Classes="pill dots">
-            <views:DotsView />
-          </Border>
-        </DataTemplate>
-      </ItemsControl.ItemTemplate>
-    </ItemsControl>
-
-    <!-- Timer pill (left, always while a run is showing) + gear pill (right, on click). The Grid spans
-         the dots-pill width so the two chips align with the dots pill's left and right edges. -->
-    <Grid>
-      <Border Classes="pill timer" HorizontalAlignment="Left" IsVisible="{Binding HasTimer}">
-        <TextBlock Classes="timertext" Text="{Binding TimerText}" />
+    <!-- Attach strip. It stretches across the dots on its cross axis, so the timer pins to one end and
+         the gear to the other (left/right when horizontal; top/bottom when vertical). -->
+    <Grid DockPanel.Dock="{Binding AttachDock}" Margin="{Binding AttachMargin}">
+      <!-- Timer readout (clickable → collapse). -->
+      <Border Classes="pill timer"
+              HorizontalAlignment="{Binding TimerHorizontal}" VerticalAlignment="{Binding TimerVertical}"
+              IsVisible="{Binding IsTimerShown}">
+        <Button Classes="flat" ToolTip.Tip="Hide timer" Click="OnTimerClick">
+          <TextBlock Classes="timertext" Text="{Binding TimerText}" />
+        </Button>
       </Border>
-      <Border Classes="pill gear" HorizontalAlignment="Right" IsVisible="{Binding IsExpanded}">
-        <Button Classes="gear" Content="&#x2699;" ToolTip.Tip="Settings" Click="OnGearClick" />
+      <!-- Chevron that takes the timer's place while collapsed (clickable → show the timer again). -->
+      <Border Classes="pill gear"
+              HorizontalAlignment="{Binding TimerHorizontal}" VerticalAlignment="{Binding TimerVertical}"
+              IsVisible="{Binding IsTimerChevronShown}">
+        <Button Classes="flat glyph" Content="&#x203A;" ToolTip.Tip="Show timer" Click="OnTimerClick" />
+      </Border>
+      <!-- Settings gear (revealed by clicking the dots; keeps its own end of the strip). -->
+      <Border Classes="pill gear"
+              HorizontalAlignment="{Binding GearHorizontal}" VerticalAlignment="{Binding GearVertical}"
+              IsVisible="{Binding IsGearVisible}">
+        <Button Classes="flat glyph" Content="&#x2699;" ToolTip.Tip="Settings" Click="OnGearClick" />
       </Border>
     </Grid>
-  </StackPanel>
+
+    <!-- Dots block: the single aggregate pill, or one dots pill per session when 2+ are live. -->
+    <Panel HorizontalAlignment="Left" VerticalAlignment="Top">
+      <Border Classes="pill dots" IsVisible="{Binding !IsExpanded}"
+              HorizontalAlignment="Left" VerticalAlignment="Top">
+        <views:DotsView DataContext="{Binding}" />
+      </Border>
+
+      <ItemsControl IsVisible="{Binding IsExpanded}" ItemsSource="{Binding Sessions}"
+                    HorizontalAlignment="Left" VerticalAlignment="Top">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <StackPanel Orientation="{Binding SessionsStackOrientation}" Spacing="6" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border Classes="pill dots">
+              <views:DotsView />
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </Panel>
+  </DockPanel>
 </UserControl>

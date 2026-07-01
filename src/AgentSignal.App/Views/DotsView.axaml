@@ -61,9 +61,12 @@
     </Style>
   </UserControl.Styles>
 
-  <!-- Dots only. The work-time timer lives in its own detached pill in PillView (below the dots),
-       so this control is a fixed dots-only cell reused by both the aggregate pill and each session row. -->
-  <StackPanel Orientation="Horizontal" Spacing="0" HorizontalAlignment="Center">
+  <!-- Dots only. The work-time timer lives in its own detached pill in PillView (beside/below the dots),
+       so this control is a fixed dots-only cell reused by both the aggregate pill and each session row.
+       Orientation is bound so the same control lays the dots in a row (Horizontal) or a column (Vertical);
+       the negative spacing tightens the gap between dots and applies equally on either axis. -->
+  <StackPanel Orientation="{Binding DotsOrientation}" Spacing="-14"
+              HorizontalAlignment="Center" VerticalAlignment="Center">
     <Border Classes="cell">
       <Border Classes="dot green"  Classes.active="{Binding IsGreenActive}"
               Classes.pulse="{Binding IsGreenPulsing}" />

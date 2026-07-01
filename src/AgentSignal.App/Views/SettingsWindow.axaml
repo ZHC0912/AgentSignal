@@ -69,6 +69,13 @@
     <TextBlock Classes="section" Text="APPEARANCE" />
     <StackPanel Spacing="6">
       <StackPanel Orientation="Horizontal" Spacing="10">
+        <TextBlock Classes="label" Text="Orientation" />
+        <ComboBox Width="140" SelectedIndex="{Binding OrientationIndex}">
+          <ComboBoxItem>Horizontal</ComboBoxItem>
+          <ComboBoxItem>Vertical</ComboBoxItem>
+        </ComboBox>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="10">
         <TextBlock Classes="label" Text="Size" />
         <Slider Width="210" Minimum="0.6" Maximum="3.0" Value="{Binding Scale}" />
         <TextBlock Width="46" Foreground="#CCFFFFFF" VerticalAlignment="Center"
