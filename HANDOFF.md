@@ -16,8 +16,15 @@
     Display-only (WorkTimer untouched, snaps back intact), never demotes a dangling `PreToolUse`
     (installs/builds stay yellow), no alert/blink on demotion. **Owner confirmed working live.**
     Proven by `--demote-test`.
+- **Manual reset + modal Settings (2026-07-04): built, `--reset-test` ALL PASS** (CLAUDE.md A.9).
+  Reset = Settings button or global **Ctrl+Alt+R** → all sessions forced green (files rewritten,
+  timers frozen as the last run's time, no alert/blink); hotkey **verified live end-to-end**.
+  Modal Settings = widget inert while Settings open (clicks silently ignored — the flash/ding nag
+  was tried three ways, did nothing on the owner's machine, and is removed/PARKED); hotkey dead
+  while Settings open. **Modal shield confirmed working live by the owner.**
 - **Mid-review (awaiting the owner's live eyeball, nothing else blocking):**
-  - **Pill-width swap** (newest): timer pill content-sized/wider; gear + collapsed-chevron = snug
+  - **The reset UX** (newest): Ctrl+Alt+R / Settings button on a real stuck yellow.
+  - **Pill-width swap**: timer pill content-sized/wider; gear + collapsed-chevron = snug
     26×26 icon squares. Check the ⚙ centring live (headless can't render `Segoe Fluent Icons`).
   - The 6.6 behaviours live: orientation switch, edge-flip while dragging, timer collapse/expand,
     two-real-session expanded view, green-blink pulse.

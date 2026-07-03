@@ -177,6 +177,23 @@ public partial class WidgetViewModel : DotsViewModel
     /// <summary>Run one poll/reconcile cycle. Used by the live timer and by the --watch diagnostic.</summary>
     public void PollOnce() => Refresh();
 
+    /// <summary>
+    /// Manual reset (Settings button / Ctrl+Alt+R): force every current session green as if its turn
+    /// completed — each timer freezes at its current value as the last run's time. The rewritten files
+    /// make it real (not display-only), so the next UserPromptSubmit starts a fresh yellow+timer
+    /// normally. One-shot quiet: the green edge this produces fires no alert and no blink.
+    /// </summary>
+    public void ResetAllSessions()
+    {
+        if (SessionResetService.ForceGreen(DateTime.UtcNow) == 0)
+            return; // nothing was cleared — don't muffle a later real finish
+        _quietReset = true;
+        Refresh(); // apply immediately (and consume the quiet flag on this pass)
+    }
+
+    // One-shot: the refresh right after a manual reset must not celebrate the forced green.
+    private bool _quietReset;
+
     private void Refresh()
     {
         IReadOnlyList<SessionState> sessions = _reader.ReadLive();
@@ -209,11 +226,14 @@ public partial class WidgetViewModel : DotsViewModel
         // (the turn was still working) the eventual real finish still fires its green alert.
         AggregateState prevReal = _realState;
         _realState = Aggregate(sessions);
-        QuietGreen = _realState != AggregateState.Green; // demoted-only green arrives without the blink
+        // Quiet green = no celebration blink: a demoted-only green (a guess) and the green right
+        // after a manual reset (a clear, not a finish) both arrive without it.
+        QuietGreen = _realState != AggregateState.Green || _quietReset;
         State = AggregateDisplayed(sessions, now);
         TimerText = DrivingTimerText(sessions);
         TickPulse(now);
         FireAlerts(sessions, prevReal, _realState);
+        _quietReset = false; // one-shot, consumed by the pass that follows the reset
     }
 
     // The aggregate of the raw file states, tracked separately from the displayed State so alert
@@ -243,7 +263,10 @@ public partial class WidgetViewModel : DotsViewModel
         // Drop keys no longer red so a later return to red re-fires.
         _redAlerted.IntersectWith(currentlyRed);
 
-        if (!_firstRefresh && next == AggregateState.Green && prev is AggregateState.Yellow or AggregateState.Red)
+        // The green edge alerts on a real finish only — a manual reset forces the same edge but is
+        // the user clearing state, not a run completing, so it stays silent (_quietReset one-shot).
+        if (!_firstRefresh && !_quietReset &&
+            next == AggregateState.Green && prev is AggregateState.Yellow or AggregateState.Red)
             _alerts.OnGreen();
 
         _firstRefresh = false;

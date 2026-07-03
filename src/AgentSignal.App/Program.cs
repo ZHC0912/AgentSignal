@@ -18,6 +18,7 @@ internal static class Program
     //   --timer-test         replay the §8 permission scenario through the real WorkTimer (diagnostic)
     //   --blink-test         drive a real SessionRowViewModel to prove the green-blink start/cancel/settle
     //   --demote-test        prove the stale-yellow→green display demotion (Decision #3) incl. guards
+    //   --reset-test         prove the manual reset (force-green files + frozen timer, quiet, fresh next run)
     //   --watch [seconds]    run the real reconcile loop over live files, printing the model (diagnostic)
     //   --startup <on|off|status>  toggle/inspect the real launch-on-startup entry (diagnostic)
     //   (no args)            run the always-on-top widget
@@ -44,6 +45,9 @@ internal static class Program
 
         if (args.Length >= 1 && args[0] == "--demote-test")
             return DemoteTest();
+
+        if (args.Length >= 1 && args[0] == "--reset-test")
+            return ResetTest();
 
         if (args.Length >= 1 && args[0] == "--watch")
             return WatchLive(args.Length >= 2 && int.TryParse(args[1], out int s) ? s : 30);
@@ -314,6 +318,96 @@ internal static class Program
         // Only yellow demotes: a red (waiting on you) sits red forever, §4 unchanged.
         row.Observe(S("red", "PermissionRequest", 300), t0.AddSeconds(400));
         Check("100s-stale red: stays red (only yellow demotes)", row.State == AggregateState.Red);
+
+        Console.WriteLine(ok ? "ALL PASS" : "FAILURES above");
+        return ok ? 0 : 1;
+    }
+
+    // Proves the manual reset (Feature A) headlessly, in two halves. FILE half: ForceGreen against a
+    // temp sessions dir rewrites yellow AND red files to green/ManualReset (pid preserved) and leaves
+    // green ones untouched. MODEL half: a real SessionRowViewModel + WorkTimer observing the forced
+    // green freezes the timer at its current value with NO blink, and the next UserPromptSubmit
+    // starts a fresh run from 0 — exactly the normal Stop behaviour. Exit 0 = ALL PASS.
+    private static int ResetTest()
+    {
+        bool ok = true;
+        void Check(string label, bool pass)
+        {
+            ok &= pass;
+            Console.WriteLine($"  {(pass ? "PASS" : "FAIL")}  {label}");
+        }
+
+        Console.WriteLine("manual-reset test (force all sessions green, quiet)");
+
+        // ---- file half: rewrite semantics against a temp dir (never the real sessions dir) --------
+        string dir = Path.Combine(Path.GetTempPath(), "agentsignal-reset-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            void Put(string id, string state, string evt) => File.WriteAllText(
+                Path.Combine(dir, $"claude__{id}.json"),
+                JsonSerializer.Serialize(new SessionState
+                {
+                    Tool = "claude", SessionId = id, State = state, Event = evt, Pid = 4242, Ts = 1_700_000_000,
+                }, AgentJsonContext.Default.SessionState));
+
+            Put("stuckyellow", "yellow", "PreToolUse");     // the Esc-mid-tool gap this feature exists for
+            Put("waitingred", "red", "PermissionRequest");
+            Put("alreadygreen", "green", "Stop");
+
+            var now = new DateTime(2026, 7, 4, 12, 0, 0, DateTimeKind.Utc);
+            int n = SessionResetService.ForceGreen(dir, now);
+            Check("rewrites exactly the two non-green files", n == 2);
+
+            SessionState Load(string id) => JsonSerializer.Deserialize(
+                File.ReadAllText(Path.Combine(dir, $"claude__{id}.json")), AgentJsonContext.Default.SessionState)!;
+
+            SessionState y = Load("stuckyellow"), r = Load("waitingred"), g = Load("alreadygreen");
+            Check("stuck yellow → green, event=ManualReset, ts=now, pid preserved",
+                y.State == "green" && y.Event == SessionResetService.EventName &&
+                y.Ts == (long)(now - DateTime.UnixEpoch).TotalSeconds && y.Pid == 4242);
+            Check("red also cleared to green", r.State == "green" && r.Event == SessionResetService.EventName);
+            Check("already-green file left untouched (still event=Stop, old ts)",
+                g.Event == "Stop" && g.Ts == 1_700_000_000);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+
+        // ---- model half: what the widget does when the forced green arrives ----------------------
+        var row = new SessionRowViewModel("claude", "reset");
+        var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        SessionState S(string state, string evt, int tsSec) => new()
+        {
+            Tool = "claude", SessionId = "reset", State = state, Event = evt,
+            Ts = (long)(t0.AddSeconds(tsSec) - DateTime.UnixEpoch).TotalSeconds,
+        };
+
+        row.Observe(S("yellow", "UserPromptSubmit", 0), t0);
+        row.Observe(S("yellow", "PreToolUse", 5), t0.AddSeconds(47)); // 47s into a run, tool in flight
+        Check("working: yellow with the timer running (0:47)",
+            row.State == AggregateState.Yellow && row.TimerText == "0:47");
+
+        // Ctrl+Alt+R / the Settings button rewrote the file; the next poll observes the forced green.
+        row.Observe(S("green", SessionResetService.EventName, 48), t0.AddSeconds(48));
+        Check("reset observed: green with the timer frozen as the last run's time (0:48)",
+            row.State == AggregateState.Green && row.TimerText == "0:48");
+        Check("  ...no green-blink on a manual clear", !row.IsGreenPulsing);
+
+        row.Observe(S("green", SessionResetService.EventName, 48), t0.AddSeconds(120));
+        Check("later polls: still green, value still frozen (0:48)",
+            row.State == AggregateState.Green && row.TimerText == "0:48");
+
+        row.Observe(S("yellow", "UserPromptSubmit", 130), t0.AddSeconds(130));
+        row.Observe(S("yellow", "PreToolUse", 133), t0.AddSeconds(139));
+        Check("next UserPromptSubmit: fresh run from 0 (0:09)",
+            row.State == AggregateState.Yellow && row.TimerText == "0:09");
+
+        // The aggregate view of a reset: real state IS green (files rewritten), so the display agrees.
+        var forced = S("green", SessionResetService.EventName, 48);
+        Check("aggregate of a reset session is green (real, not display-only)",
+            WidgetViewModel.Aggregate(new[] { forced }) == AggregateState.Green);
 
         Console.WriteLine(ok ? "ALL PASS" : "FAILURES above");
         return ok ? 0 : 1;

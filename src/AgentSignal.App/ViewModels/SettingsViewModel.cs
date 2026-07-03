@@ -15,6 +15,7 @@ public partial class SettingsViewModel : ObservableObject
 {
     private readonly ConfigService _cfg = ConfigService.Instance;
     private readonly AlertService? _alerts;
+    private readonly Action? _resetAll;
     private readonly bool _loading;
 
     [ObservableProperty][NotifyPropertyChangedFor(nameof(GreenSwatch))] private string _greenColor = "";
@@ -36,9 +37,10 @@ public partial class SettingsViewModel : ObservableObject
     public IBrush YellowSwatch => Swatch(YellowColor);
     public IBrush RedSwatch => Swatch(RedColor);
 
-    public SettingsViewModel(AlertService? alerts = null)
+    public SettingsViewModel(AlertService? alerts = null, Action? resetAll = null)
     {
         _alerts = alerts;
+        _resetAll = resetAll;
 
         _loading = true;
         AppConfig c = _cfg.Current;
@@ -76,6 +78,10 @@ public partial class SettingsViewModel : ObservableObject
 
     [RelayCommand]
     private void TestAlert() => _alerts?.Test();
+
+    /// <summary>Manual reset: force all current sessions green (Feature A). Same action as Ctrl+Alt+R.</summary>
+    [RelayCommand]
+    private void ResetSessions() => _resetAll?.Invoke();
 
     private void Push(Action<AppConfig> mutate)
     {

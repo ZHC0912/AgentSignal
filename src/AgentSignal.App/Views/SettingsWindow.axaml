@@ -6,6 +6,7 @@
         SizeToContent="Height"
         CanResize="False"
         WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="True"
         Background="#15171C">
 
   <Window.Styles>
@@ -102,6 +103,15 @@
     <StackPanel Spacing="8">
       <CheckBox Content="Lock position (ignore drags)" IsChecked="{Binding LockPosition}" />
       <CheckBox Content="Launch on startup" IsChecked="{Binding LaunchOnStartup}" />
+    </StackPanel>
+
+    <!-- Reset -->
+    <TextBlock Classes="section" Text="RESET" />
+    <StackPanel Spacing="6">
+      <Button Content="Reset — force all sessions green" Command="{Binding ResetSessionsCommand}"
+              HorizontalAlignment="Left" />
+      <TextBlock Foreground="#8C9AAB" FontSize="11" TextWrapping="Wrap"
+                 Text="Clears a stuck yellow (e.g. after Esc during a tool): all sessions show green with the timer frozen as the last run's time. No alert or blink. Global hotkey: Ctrl+Alt+R (disabled while this window is open)." />
     </StackPanel>
 
   </StackPanel>

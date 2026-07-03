@@ -41,7 +41,9 @@ public sealed class SessionRowViewModel : DotsViewModel
             _ => AggregateState.Off,
         };
         IsDemoted = real == AggregateState.Yellow && StaleYellow.IsDemoted(s, nowUtc);
-        QuietGreen = IsDemoted; // a demoted green is a guess — no celebration blink
+        // No celebration blink for a green that isn't a real finish: a demotion is a guess, and a
+        // manually reset session (event=ManualReset) was cleared by the user, not completed.
+        QuietGreen = IsDemoted || s.Event == SessionResetService.EventName;
         State = IsDemoted ? AggregateState.Green : real;
         TimerText = _timer.HasValue ? FormatElapsed(_timer.Elapsed) : "";
         TickPulse(nowUtc);

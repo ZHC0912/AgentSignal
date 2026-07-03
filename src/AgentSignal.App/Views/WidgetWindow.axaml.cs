@@ -39,7 +39,18 @@ public partial class WidgetWindow : Window
 
         ApplyConfig();
         ConfigService.Instance.Changed += ApplyConfig;
+
+        // Modal settings: while the settings window is open the shield covers the widget, making it
+        // inert (no click, no drag, no gear/timer buttons — the overlay swallows the press first).
+        if (Application.Current is App app)
+            app.SettingsOpenChanged += open => ModalShield.IsVisible = open;
     }
+
+    // Presses on the inert widget are SILENTLY ignored — swallowed before the window's drag/click
+    // handling can see them. (An attention cue here — flash + ding — was tried and removed; see App.)
+    private void OnShieldPressed(object? sender, PointerPressedEventArgs e) => e.Handled = true;
+
+    private void OnShieldReleased(object? sender, PointerReleasedEventArgs e) => e.Handled = true;
 
     private static bool IsVerticalConfig() =>
         string.Equals(ConfigService.Instance.Current.Orientation, "Vertical", StringComparison.OrdinalIgnoreCase);
@@ -140,6 +151,10 @@ public partial class WidgetWindow : Window
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+
+        // Inert while settings is open (the shield normally swallows the press before we get here —
+        // this guard is defence in depth so no path can start a drag or a gear toggle).
+        if (Application.Current is App { IsSettingsOpen: true }) return;
 
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
 

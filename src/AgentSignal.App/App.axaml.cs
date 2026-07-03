@@ -12,6 +12,14 @@ public partial class App : Application
 {
     private AlertService? _alerts;
     private Window? _settings;
+    private WidgetViewModel? _widgetVm;
+    private IGlobalHotkey? _hotkey;
+
+    /// <summary>True while the settings window is open — the widget goes inert (modal settings).</summary>
+    public bool IsSettingsOpen => _settings is not null;
+
+    /// <summary>Raised with true/false as the settings window opens/closes (drives the widget's shield).</summary>
+    public event Action<bool>? SettingsOpenChanged;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -24,7 +32,16 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _alerts = new AlertService(new SystemSoundPlayer(), new ToastNotifier());
-            desktop.MainWindow = new WidgetWindow { DataContext = new WidgetViewModel(_alerts) };
+            _widgetVm = new WidgetViewModel(_alerts);
+            var widget = new WidgetWindow { DataContext = _widgetVm };
+            desktop.MainWindow = widget;
+            // Global Ctrl+Alt+R → manual reset. Registered once the window (and so its HWND) exists;
+            // suspended while settings is open (ShowSettings) — the in-window Reset button covers that.
+            widget.Opened += (_, _) =>
+            {
+                _hotkey ??= GlobalHotkey.Create(widget, ResetAllSessions);
+                if (!IsSettingsOpen) _hotkey.Register();
+            };
             // The widget is borderless with no close button; quitting is via the tray menu.
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         }
@@ -40,10 +57,25 @@ public partial class App : Application
             _settings.Activate();
             return;
         }
-        _settings = new SettingsWindow { DataContext = new SettingsViewModel(_alerts) };
-        _settings.Closed += (_, _) => _settings = null;
+        _settings = new SettingsWindow { DataContext = new SettingsViewModel(_alerts, ResetAllSessions) };
+        _settings.Closed += (_, _) =>
+        {
+            _settings = null;
+            _hotkey?.Register();          // Ctrl+Alt+R works again once settings is gone
+            SettingsOpenChanged?.Invoke(false);
+        };
+        _hotkey?.Unregister();            // hotkey is disabled for as long as settings is open
         _settings.Show();
+        SettingsOpenChanged?.Invoke(true);
     }
+
+    /// <summary>Force all current sessions green (manual reset) — the Settings button and Ctrl+Alt+R.</summary>
+    private void ResetAllSessions() => _widgetVm?.ResetAllSessions();
+
+    // NOTE (2026-07-04): there is deliberately NO attention cue when the inert widget is clicked.
+    // A flash/ding nag (FlashWindowEx + MessageBeep, three variants) was tried and did nothing on
+    // the owner's machine, so it was removed — clicking the shielded widget is silently ignored
+    // (confirmed live). The cue is PARKED: don't reattempt it unless the owner asks.
 
     private void TraySettingsClick(object? sender, EventArgs e) => ShowSettings();
 

@@ -10,7 +10,14 @@
         ShowInTaskbar="False"
         CanResize="False"
         SizeToContent="WidthAndHeight">
-  <LayoutTransformControl x:Name="ScaleHost">
-    <views:PillView />
-  </LayoutTransformControl>
+  <Panel>
+    <LayoutTransformControl x:Name="ScaleHost">
+      <views:PillView />
+    </LayoutTransformControl>
+    <!-- Modal shield: while the settings window is open the widget is INERT. This transparent (but
+         hit-testable) overlay sits above everything, swallowing every press before it can reach the
+         buttons or start a drag; clicks are silently ignored. Invisible otherwise. -->
+    <Border x:Name="ModalShield" Background="Transparent" IsVisible="False"
+            PointerPressed="OnShieldPressed" PointerReleased="OnShieldReleased" />
+  </Panel>
 </Window>
