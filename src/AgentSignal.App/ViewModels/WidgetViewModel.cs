@@ -38,6 +38,8 @@ public partial class WidgetViewModel : DotsViewModel
     /// <summary>Automatic: true whenever more than one session is live (per-session rows), else the
     /// single aggregate pill. No longer driven by clicks.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsTimerShown))]
+    [NotifyPropertyChangedFor(nameof(IsTimerChevronShown))]
     private bool _isExpanded;
 
     /// <summary>The settings gear is revealed by clicking the dots (independent of sessions).</summary>
@@ -53,6 +55,8 @@ public partial class WidgetViewModel : DotsViewModel
     [NotifyPropertyChangedFor(nameof(TimerVertical))]
     [NotifyPropertyChangedFor(nameof(GearHorizontal))]
     [NotifyPropertyChangedFor(nameof(GearVertical))]
+    [NotifyPropertyChangedFor(nameof(GearMargin))]
+    [NotifyPropertyChangedFor(nameof(TimerChevronGlyph))]
     private bool _isVertical;
 
     // Smart pill direction (Behaviour B): the window sets this true when the widget is near the far
@@ -60,6 +64,9 @@ public partial class WidgetViewModel : DotsViewModel
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(AttachDock))]
     [NotifyPropertyChangedFor(nameof(AttachMargin))]
+    [NotifyPropertyChangedFor(nameof(TimerHorizontal))]
+    [NotifyPropertyChangedFor(nameof(GearHorizontal))]
+    [NotifyPropertyChangedFor(nameof(TimerChevronGlyph))]
     private bool _attachFlip;
 
     // Timer collapsed behind its chevron. Visual only — the underlying WorkTimer keeps counting — and
@@ -126,16 +133,32 @@ public partial class WidgetViewModel : DotsViewModel
     /// <summary>Multiple session rows stack across the dots axis (rows when horizontal, columns when vertical).</summary>
     public Orientation SessionsStackOrientation => IsVertical ? Orientation.Horizontal : Orientation.Vertical;
 
-    // Timer pinned to the "start" of the attach strip, gear to the "end", so they sit at opposite
-    // corners of the dots (left/right when horizontal; top/bottom when vertical).
-    public HorizontalAlignment TimerHorizontal => IsVertical ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+    // Horizontal: timer pinned to the strip's left, gear to its right — opposite corners of the dots.
+    // Vertical: both pills HUG the dots-facing edge of the strip (left edge when the strip is on the
+    // right of the dots, right edge when flipped to the left) so they sit close beside the column
+    // instead of floating in the 84px-wide reservation, and the gear stacks DIRECTLY BELOW the
+    // timer/chevron (GearMargin = the slot's 26px + a 4px gap) so the pair reads as one tight cluster.
+    public HorizontalAlignment TimerHorizontal => IsVertical
+        ? (AttachFlip ? HorizontalAlignment.Right : HorizontalAlignment.Left)
+        : HorizontalAlignment.Left;
     public VerticalAlignment TimerVertical => IsVertical ? VerticalAlignment.Top : VerticalAlignment.Center;
-    public HorizontalAlignment GearHorizontal => IsVertical ? HorizontalAlignment.Center : HorizontalAlignment.Right;
-    public VerticalAlignment GearVertical => IsVertical ? VerticalAlignment.Bottom : VerticalAlignment.Center;
+    public HorizontalAlignment GearHorizontal => IsVertical
+        ? (AttachFlip ? HorizontalAlignment.Right : HorizontalAlignment.Left)
+        : HorizontalAlignment.Right;
+    public VerticalAlignment GearVertical => IsVertical ? VerticalAlignment.Top : VerticalAlignment.Center;
+    public Thickness GearMargin => IsVertical ? new Thickness(0, 30, 0, 0) : default;
 
-    // The timer slot shows the readout, or a chevron once collapsed — but only when there's a value.
-    public bool IsTimerShown => HasTimer && !IsTimerCollapsed;
-    public bool IsTimerChevronShown => HasTimer && IsTimerCollapsed;
+    // The attach-strip timer slot shows the driving-session readout, or a chevron once collapsed — but
+    // only when there's a value AND we're not expanded. In the expanded (2+ session) view each row
+    // carries its own independent timer, so the single shared readout is hidden to avoid a redundant,
+    // driver-hopping second number.
+    public bool IsTimerShown => HasTimer && !IsTimerCollapsed && !IsExpanded;
+    public bool IsTimerChevronShown => HasTimer && IsTimerCollapsed && !IsExpanded;
+
+    // Collapse chevron points the way the timer would reappear: '‹' when the strip opens leftward
+    // (vertical widget flipped to the left near the right edge), otherwise the default '›'. The other
+    // three layouts (horizontal below/above, vertical-right) all read correctly as '›'.
+    public string TimerChevronGlyph => AttachDock == Dock.Left ? "‹" : "›";
 
     partial void OnIsVerticalChanged(bool value)
     {
@@ -181,12 +204,21 @@ public partial class WidgetViewModel : DotsViewModel
         SessionCount = sessions.Count;
         IsExpanded = sessions.Count > 1; // per-session rows appear automatically for 2+ sessions
 
-        AggregateState prev = State;
-        State = Aggregate(sessions);
+        // The DISPLAYED colour honours the stale-yellow demotion (Decision #3); alerts are keyed to
+        // the REAL states below, so a demotion (a guess) never beeps, and if the demotion was wrong
+        // (the turn was still working) the eventual real finish still fires its green alert.
+        AggregateState prevReal = _realState;
+        _realState = Aggregate(sessions);
+        QuietGreen = _realState != AggregateState.Green; // demoted-only green arrives without the blink
+        State = AggregateDisplayed(sessions, now);
         TimerText = DrivingTimerText(sessions);
         TickPulse(now);
-        FireAlerts(sessions, prev, State);
+        FireAlerts(sessions, prevReal, _realState);
     }
+
+    // The aggregate of the raw file states, tracked separately from the displayed State so alert
+    // edges are computed on what the agents actually reported, not on the demoted display.
+    private AggregateState _realState = AggregateState.Off;
 
     // Keys of sessions currently red that we've already alerted for — the per-session red debounce.
     private readonly HashSet<string> _redAlerted = new();
@@ -265,6 +297,30 @@ public partial class WidgetViewModel : DotsViewModel
             {
                 case "red": return AggregateState.Red; // most urgent wins immediately
                 case "yellow": anyYellow = true; break;
+                case "green": anyGreen = true; break;
+            }
+        }
+        if (anyYellow) return AggregateState.Yellow;
+        if (anyGreen) return AggregateState.Green;
+        return AggregateState.Off;
+    }
+
+    /// <summary>
+    /// Like <see cref="Aggregate"/> but with the stale-yellow display demotion applied per session
+    /// (Decision #3): a yellow that has gone stale counts as green, so a solo aborted session turns
+    /// the pill green instead of lying yellow forever. Red is untouched and still wins.
+    /// </summary>
+    public static AggregateState AggregateDisplayed(IReadOnlyList<SessionState> sessions, DateTime nowUtc)
+    {
+        bool anyYellow = false, anyGreen = false;
+        foreach (SessionState s in sessions)
+        {
+            switch (s.State)
+            {
+                case "red": return AggregateState.Red;
+                case "yellow":
+                    if (StaleYellow.IsDemoted(s, nowUtc)) anyGreen = true; else anyYellow = true;
+                    break;
                 case "green": anyGreen = true; break;
             }
         }

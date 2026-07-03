@@ -17,11 +17,29 @@
       <Setter Property="CornerRadius" Value="21" />
       <Setter Property="Padding" Value="8,2" />
     </Style>
-    <!-- Timer and gear pills are a matched pair: identical corner radius, padding and height. -->
+    <!-- Timer and gear pills share the rounded-chip look. The Border IS the visible pill and the
+         element to size — the Button inside is transparent, chrome-less click plumbing. -->
     <Style Selector="Border.pill.timer, Border.pill.gear">
       <Setter Property="CornerRadius" Value="11" />
+    </Style>
+
+    <!-- Timer pill: CONTENT-sized, the wider of the pair — any time from 0:09 to 12:34:56 fits
+         comfortably inside its padding, never clipping. (12:34:56 in Consolas 12 + this padding
+         ≈ 82px, which still fits the fixed 84px reservation slot, so the dots anchor holds.)
+         Applies to the strip chip AND the per-session row timers. -->
+    <Style Selector="Border.pill.timer">
       <Setter Property="Padding" Value="11,3" />
       <Setter Property="MinHeight" Value="22" />
+    </Style>
+
+    <!-- Gear and collapsed-chevron pills (both carry classes "pill gear"): compact icon buttons —
+         a snug 26×26 square that just wraps the glyph (26 = the strip slot height, so the vertical
+         GearMargin cluster math is untouched). Padding 0: the fixed square + the Button's centred
+         content alignment do the spacing. -->
+    <Style Selector="Border.pill.gear">
+      <Setter Property="Width" Value="26" />
+      <Setter Property="Height" Value="26" />
+      <Setter Property="Padding" Value="0" />
     </Style>
 
     <!-- Flat, click-consuming button used for the timer, its chevron and the gear. Being a Button, it
@@ -78,22 +96,45 @@
     <!-- Attach strip. It stretches across the dots on its cross axis, so the timer pins to one end and
          the gear to the other (left/right when horizontal; top/bottom when vertical). -->
     <Grid DockPanel.Dock="{Binding AttachDock}" Margin="{Binding AttachMargin}">
-      <!-- Timer readout (clickable → collapse). -->
-      <Border Classes="pill timer"
-              HorizontalAlignment="{Binding TimerHorizontal}" VerticalAlignment="{Binding TimerVertical}"
-              IsVisible="{Binding IsTimerShown}">
-        <Button Classes="flat" ToolTip.Tip="Hide timer" Click="OnTimerClick">
-          <TextBlock Classes="timertext" Text="{Binding TimerText}" />
-        </Button>
-      </Border>
-      <!-- Chevron that takes the timer's place while collapsed (clickable → show the timer again). -->
-      <Border Classes="pill gear"
-              HorizontalAlignment="{Binding TimerHorizontal}" VerticalAlignment="{Binding TimerVertical}"
-              IsVisible="{Binding IsTimerChevronShown}">
-        <Button Classes="flat glyph" Content="&#x203A;" ToolTip.Tip="Show timer" Click="OnTimerClick" />
-      </Border>
-      <!-- Settings gear (revealed by clicking the dots; keeps its own end of the strip). -->
-      <Border Classes="pill gear"
+      <!-- Timer/chevron SLOT: a FIXED-size, transparent reservation. The dots pill is the anchor; only
+           the element INSIDE this slot ever changes (timer chip ⇄ chevron, varying text width, or fully
+           hidden). Because the slot's footprint is constant, the attach strip never resizes, so the dots
+           pill can't be nudged in ANY orientation or flip direction (below/above/left/right). Reserved
+           whenever the single aggregate pill is shown (!IsExpanded); the multi-session view uses its own
+           per-row timers instead. Sizes are pre-scale (the whole PillView is scaled by the window). -->
+      <Panel Width="84" Height="26"
+             HorizontalAlignment="{Binding TimerHorizontal}" VerticalAlignment="{Binding TimerVertical}"
+             IsVisible="{Binding !IsExpanded}">
+        <!-- Timer readout (clickable → collapse). Hugs the outer edge via TimerHorizontal. -->
+        <Border Classes="pill timer"
+                HorizontalAlignment="{Binding TimerHorizontal}" VerticalAlignment="Center"
+                IsVisible="{Binding IsTimerShown}">
+          <Button Classes="flat" ToolTip.Tip="Hide timer" Click="OnTimerClick">
+            <TextBlock Classes="timertext" Text="{Binding TimerText}" />
+          </Button>
+        </Border>
+        <!-- Collapsed chevron (clickable → show the timer again). Sits INSIDE the reservation slot with
+             the SAME alignment as the timer chip, so it appears exactly at the timer's own spot (the
+             chip and the chevron simply swap in place). Being inside the fixed slot also means it can
+             never change the strip's footprint, so the dots stay anchored. Direction-aware glyph (›/‹)
+             unchanged. -->
+        <Border Classes="pill gear"
+                HorizontalAlignment="{Binding TimerHorizontal}" VerticalAlignment="Center"
+                IsVisible="{Binding IsTimerChevronShown}">
+          <!-- Chevron uses a NORMAL UI font (not the Segoe Fluent Icons glyph font the gear uses): ‹/›
+               are ordinary punctuation, and that icon font has no real glyph for them, so it rendered a
+               very wide fallback (~62px advance → an ~84px pill). A normal font keeps the glyph narrow
+               so the pill hugs it like the gear. See CLAUDE.md A.6. -->
+          <Button Classes="flat" ToolTip.Tip="Show timer" Click="OnTimerClick">
+            <TextBlock Text="{Binding TimerChevronGlyph}" FontFamily="Segoe UI, Inter" FontSize="15"
+                       Foreground="#B0FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Button>
+        </Border>
+      </Panel>
+      <!-- Settings gear (revealed by clicking the dots). Horizontal: pinned to the strip's far end,
+           opposite the timer. Vertical: GearMargin drops it directly below the timer/chevron slot so
+           the two pills cluster tightly beside the dots column. -->
+      <Border Classes="pill gear" Margin="{Binding GearMargin}"
               HorizontalAlignment="{Binding GearHorizontal}" VerticalAlignment="{Binding GearVertical}"
               IsVisible="{Binding IsGearVisible}">
         <Button Classes="flat glyph" Content="&#x2699;" ToolTip.Tip="Settings" Click="OnGearClick" />
@@ -107,18 +148,29 @@
         <views:DotsView DataContext="{Binding}" />
       </Border>
 
+      <!-- Expanded: one row per live session. Each row carries its OWN independent timer (from that
+           session's WorkTimer) beside/below its dots, so no row's time changes when another ticks.
+           The row lays dots + timer along the dots axis (timer to the right when horizontal, below
+           when vertical); rows are spaced apart so each timer reads clearly and doesn't crowd. -->
       <ItemsControl IsVisible="{Binding IsExpanded}" ItemsSource="{Binding Sessions}"
                     HorizontalAlignment="Left" VerticalAlignment="Top">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
-            <StackPanel Orientation="{Binding SessionsStackOrientation}" Spacing="6" />
+            <StackPanel Orientation="{Binding SessionsStackOrientation}" Spacing="12" />
           </ItemsPanelTemplate>
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate>
-            <Border Classes="pill dots">
-              <views:DotsView />
-            </Border>
+            <StackPanel Orientation="{Binding DotsOrientation}" Spacing="7"
+                        HorizontalAlignment="Center" VerticalAlignment="Center">
+              <Border Classes="pill dots" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <views:DotsView />
+              </Border>
+              <Border Classes="pill timer" IsVisible="{Binding HasTimer}"
+                      HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock Classes="timertext" Text="{Binding TimerText}" />
+              </Border>
+            </StackPanel>
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>

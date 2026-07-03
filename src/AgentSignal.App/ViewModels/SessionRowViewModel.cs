@@ -23,17 +23,26 @@ public sealed class SessionRowViewModel : DotsViewModel
         Key = tool + "__" + sessionId;
     }
 
+    /// <summary>True while this row is displayed green only because its yellow went stale (Decision #3).
+    /// The underlying file still says yellow and the WorkTimer is still counting.</summary>
+    public bool IsDemoted { get; private set; }
+
     /// <summary>Fold this poll's state into the row: advance the timer, recolour, refresh the text.</summary>
     public void Observe(SessionState s, DateTime nowUtc)
     {
+        // The timer always observes the REAL file state — the stale-yellow demotion below is
+        // display-only, so a falsely demoted session keeps accumulating and snaps back intact.
         _timer.Observe(s, nowUtc);
-        State = s.State switch
+        AggregateState real = s.State switch
         {
             "red" => AggregateState.Red,
             "yellow" => AggregateState.Yellow,
             "green" => AggregateState.Green,
             _ => AggregateState.Off,
         };
+        IsDemoted = real == AggregateState.Yellow && StaleYellow.IsDemoted(s, nowUtc);
+        QuietGreen = IsDemoted; // a demoted green is a guess — no celebration blink
+        State = IsDemoted ? AggregateState.Green : real;
         TimerText = _timer.HasValue ? FormatElapsed(_timer.Elapsed) : "";
         TickPulse(nowUtc);
     }

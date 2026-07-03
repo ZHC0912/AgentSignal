@@ -1,10 +1,11 @@
-param([string]$EventName = "UNKNOWN")
+param([string]$EventName = "UNKNOWN", [string]$LogFile = "phase0-events.log")
 
-# Phase 0 instrumentation logger.
+# Phase 0 instrumentation logger (reused for later event-order investigations).
 # Reads the hook's stdin JSON payload and appends one timestamped, single-line
-# record to ~/.agentsignal/phase0-events.log so we can reconstruct the exact
-# firing order of Claude Code lifecycle hooks (especially around permission
-# prompts). Temporary — removed once the event mapping is locked.
+# record to ~/.agentsignal/<LogFile> so we can reconstruct the exact firing
+# order of Claude Code lifecycle hooks (e.g. around permission prompts, or an
+# Esc-cancelled turn). Temporary instrumentation — removed once the mapping is
+# locked. Pass -LogFile to isolate a capture into its own file.
 
 $ErrorActionPreference = "SilentlyContinue"
 
@@ -23,7 +24,7 @@ $logDir = Join-Path $env:USERPROFILE ".agentsignal"
 if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
-$logFile = Join-Path $logDir "phase0-events.log"
+$logFile = Join-Path $logDir $LogFile
 
 $line = "$ts`t$EventName`t$payload"
 

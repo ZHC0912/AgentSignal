@@ -33,6 +33,12 @@ public abstract partial class DotsViewModel : ObservableObject
 
     private DateTime _pulseUntilUtc = DateTime.MinValue;
 
+    /// <summary>When true, the next entry into green starts no celebration blink. Set (every tick,
+    /// BEFORE assigning <see cref="State"/>) by the stale-yellow demotion: a demoted green is a guess,
+    /// not a confirmed finish, so it arrives quietly. A real green transition assigns this false first,
+    /// so the blink behaves exactly as before.</summary>
+    protected bool QuietGreen { get; set; }
+
     public bool IsGreenActive => State == AggregateState.Green;
     public bool IsYellowActive => State == AggregateState.Yellow;
     public bool IsRedActive => State == AggregateState.Red;
@@ -45,7 +51,7 @@ public abstract partial class DotsViewModel : ObservableObject
     // TickPulse timing and the .dot.pulse animation in DotsView.
     partial void OnStateChanged(AggregateState oldValue, AggregateState newValue)
     {
-        if (newValue == AggregateState.Green && oldValue != AggregateState.Green)
+        if (newValue == AggregateState.Green && oldValue != AggregateState.Green && !QuietGreen)
             StartGreenPulse();
         else
             IsGreenPulsing = false;

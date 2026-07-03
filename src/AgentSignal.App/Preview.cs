@@ -1,9 +1,11 @@
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using AgentSignal.App.ViewModels;
 using AgentSignal.App.Views;
 
@@ -45,8 +47,8 @@ internal static class Preview
             (Vm(false, true,  false, true),  "horizontal near BOTTOM\npills flip ABOVE the dots"),
             (Vm(false, false, true,  true),  "horizontal · timer collapsed\nchevron in timer slot, gear kept"),
             (Vm(true,  false, false, true),  "vertical · gear revealed\ndots column, pills to the RIGHT"),
-            (Vm(true,  true,  false, true),  "vertical near RIGHT edge\npills flip to the LEFT"),
-            (Vm(true,  false, true,  true),  "vertical · timer collapsed\nchevron beside the column"),
+            (Vm(true,  false, true,  true),  "vertical · timer collapsed\nchevron beside the column (›)"),
+            (Vm(true,  true,  true,  true),  "vertical near RIGHT + collapsed\nchevron flips to ‹ (opens left)"),
         };
 
         var grid = new Avalonia.Controls.Primitives.UniformGrid { Columns = 3, Margin = new Thickness(4) };
@@ -96,6 +98,81 @@ internal static class Preview
         using (FileStream fs = File.Create(full)) frame.Save(fs);
         Console.WriteLine($"saved layout preview {full} ({frame.PixelSize.Width}x{frame.PixelSize.Height})");
         return 0;
+    }
+
+    /// <summary>
+    /// Headless pixel-stability proof for the dots anchor. For each orientation × flip (all 4 attach
+    /// docks), it measures the dots pill's offset within the PillView while toggling the timer chip ⇄
+    /// chevron, widening the timer text, and hiding the timer entirely. The dots must not move.
+    /// Invoked with: AgentSignal.App --anchor-test. Exit code 0 = all stable.
+    /// </summary>
+    public static int AnchorTest()
+    {
+        AppBuilder.Configure<App>()
+            .UseSkia()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .WithInterFont()
+            .SetupWithoutStarting();
+        Services.ThemeService.Apply(Services.ConfigService.Instance.Current);
+
+        static string Fmt(Point p) => double.IsNaN(p.X) ? "(?, ?)" : $"({p.X:0.0}, {p.Y:0.0})";
+        static bool Close(Point a, Point b) => Math.Abs(a.X - b.X) < 0.5 && Math.Abs(a.Y - b.Y) < 0.5;
+
+        bool allPass = true;
+        foreach (bool vertical in new[] { false, true })
+        foreach (bool flip in new[] { false, true })
+        {
+            var vm = new WidgetViewModel(live: false) { State = AggregateState.Yellow, IsGearVisible = true };
+            vm.IsVertical = vertical;
+            vm.AttachFlip = flip;
+
+            var pill = new PillView { DataContext = vm };
+            var window = new Window
+            {
+                SystemDecorations = SystemDecorations.None,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                CanResize = false,
+                Content = pill,
+            };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            Point Measure(string timer, bool collapsed, bool gearVisible)
+            {
+                vm.IsGearVisible = gearVisible;
+                vm.TimerText = timer;
+                vm.IsTimerCollapsed = collapsed;
+                window.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+                DotsView? dots = pill.GetVisualDescendants().OfType<DotsView>().FirstOrDefault();
+                return dots?.TranslatePoint(new Point(0, 0), pill) ?? new Point(double.NaN, double.NaN);
+            }
+
+            // Cover both gear-visible and gear-hidden (gear is hidden by default, and the chevron's height
+            // must not grow the strip in either case). Baseline = chip + gear on; everything must match it.
+            Point baseline = Measure("1:10", false, true);
+            (string label, Point p)[] variants =
+            {
+                ("chevron/gearOn",   Measure("1:10", true, true)),
+                ("wide/gearOn",      Measure("12:34:56", false, true)),
+                ("hidden/gearOn",    Measure("", false, true)),
+                ("chip/gearOff",     Measure("1:10", false, false)),
+                ("chevron/gearOff",  Measure("1:10", true, false)),
+                ("hidden/gearOff",   Measure("", false, false)),
+            };
+            window.Close();
+
+            bool pass = variants.All(v => Close(baseline, v.p));
+            allPass &= pass;
+            Console.WriteLine($"{(pass ? "PASS" : "FAIL")}  {(vertical ? "vertical" : "horizontal")} · {(flip ? "flip" : "normal")}  (dock {vm.AttachDock})  baseline {Fmt(baseline)}");
+            foreach ((string label, Point p) in variants)
+                Console.WriteLine($"        {(Close(baseline, p) ? "ok  " : "MOVED")} {label,-16} {Fmt(p)}");
+        }
+
+        Console.WriteLine(allPass
+            ? "\nALL PASS — dots pill is pixel-stable across chip⇄chevron, text-width and hidden↔shown in every layout."
+            : "\nFAILURES ABOVE — dots pill moved.");
+        return allPass ? 0 : 1;
     }
 
     public static int Render(string outPath)
