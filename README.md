@@ -100,3 +100,7 @@ Windows is fully supported and shipped. The codebase is cross-platform (Avalonia
 - 📱 **Phone notifications** (via [ntfy](https://ntfy.sh)) — get the red "agent needs you" alert on your phone when you step away.
 - 🤖 **Codex adapter** — same hook vocabulary, same writer; the seam is already in place.
 - 🐧 **Linux packaging** (and startup/sound/hotkey implementations behind the existing interfaces).
+
+## License
+
+[MIT](LICENSE)
