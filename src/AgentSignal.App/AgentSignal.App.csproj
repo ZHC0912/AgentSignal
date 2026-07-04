@@ -10,6 +10,7 @@
     <RootNamespace>AgentSignal.App</RootNamespace>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <AvaloniaVersion>11.2.*</AvaloniaVersion>
   </PropertyGroup>
 
@@ -20,6 +21,10 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="$(AvaloniaVersion)" />
     <PackageReference Include="Avalonia.Headless" Version="$(AvaloniaVersion)" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <!-- Direct pin over Avalonia's transitive 0.20.0, which has a known vulnerability (NU1903,
+         GHSA-xrw6-gwf8-vvr9). 0.21.3 is the patched release on the same API line; 0.22–0.91 are
+         vulnerable again (patched only at 0.92, a much bigger jump Avalonia 11.2 wasn't built for). -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
   </ItemGroup>
 
   <ItemGroup>

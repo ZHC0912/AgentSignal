@@ -45,14 +45,24 @@ internal sealed class WindowsStartupManager : IStartupManager
 
     private static string LaunchCommand()
     {
-        // Prefer launching <dll> through the dotnet host so no DOTNET_ROOT is required at logon.
+        // Self-contained single-file build (the Phase 7 install): the running exe IS the whole app —
+        // no AgentSignal.App.dll sits beside it — so register the exe itself. That makes the Run
+        // value point at the stable installed path with zero runtime/DOTNET_ROOT dependency.
         string dll = Path.Combine(AppContext.BaseDirectory, "AgentSignal.App.dll");
+        string? proc = Environment.ProcessPath;
+        bool viaDotnetHost = proc is null ||
+            Path.GetFileName(proc).Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase);
+        if (!viaDotnetHost && !File.Exists(dll))
+            return $"\\\"{proc}\\\"";
+
+        // Framework-dependent (dev tree): launch <dll> through the user-local dotnet host so no
+        // DOTNET_ROOT is required at logon.
         string host = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "dotnet.exe");
         if (File.Exists(host) && File.Exists(dll))
             return $"\\\"{host}\\\" \\\"{dll}\\\"";
 
-        // Fallback: the apphost exe (needs the runtime resolvable, e.g. a self-contained build).
+        // Fallback: the apphost exe (needs the runtime resolvable from PATH/registry at logon).
         string exe = Path.Combine(AppContext.BaseDirectory, "AgentSignal.App.exe");
         return $"\\\"{exe}\\\"";
     }

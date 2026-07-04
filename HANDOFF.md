@@ -28,9 +28,12 @@
     26×26 icon squares. Check the ⚙ centring live (headless can't render `Segoe Fluent Icons`).
   - The 6.6 behaviours live: orientation switch, edge-flip while dragging, timer collapse/expand,
     two-real-session expanded view, green-blink pulse.
-- **Next: Phase 7 (packaging)** — gated on those eyeballs + an explicit go-ahead. Self-contained
-  App build (kills the `DOTNET_ROOT`/stale-`bin\Release` startup caveats) + bump `Tmds.DBus.Protocol`
-  (NU1903), Windows + Linux.
+- **Phase 7 (Windows packaging): built 2026-07-04.** Self-contained single-file `AgentSignal.exe`
+  (icon, ≈46MB) + trimmed `AgentSignal.Writer.exe` (≈11MB), both verified with no .NET on the
+  machine; `Tmds.DBus.Protocol` pinned 0.21.3 (NU1903 cleared); one-step `install.ps1` →
+  `%LOCALAPPDATA%\AgentSignal` (stable startup path); portfolio README + docs renders.
+  **v1.0.0 GitHub Release staged, awaiting the owner's explicit go-ahead to tag/publish.**
+  Linux packaging still to do.
 
 ## Get running on this machine
 
