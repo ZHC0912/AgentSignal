@@ -63,6 +63,8 @@ AgentSignal.App  ──  the Avalonia widget: dots, timers, alerts
 
 The hooks only ever report a state word (`green` / `yellow` / `red` / `off`); all timing logic lives in the widget, derived from state transitions. Session liveness is real: a session disappears when it ends *or* its process dies (PID captured at session start) — never on an inactivity timeout, so a healthy idle agent stays green forever.
 
+Full documentation: **[architecture & behaviour](docs/architecture.md)** · **[Claude Code hook events (verified)](docs/claude-hook-events.md)**
+
 | State | Meaning | Timer |
 |---|---|---|
 | 🟢 green | idle / run finished | frozen at the last run's time |
@@ -87,7 +89,7 @@ dotnet publish src/AgentSignal.Writer -c Release -r win-x64 --self-contained tru
 
 Layout: `src/AgentSignal.Core` (state contract, paths, process liveness) · `src/AgentSignal.Writer` (hook-invoked writer + `install claude`) · `src/AgentSignal.App` (Avalonia widget) · `adapters/claude` (hook mapping + the Phase 0 event-order findings).
 
-The app ships with headless diagnostics — `--timer-test`, `--anchor-test`, `--reset-test`, `--blink-test`, `--screenshot <png>`, `--dump`, `--watch` — that prove the timer math, layout stability and reset behaviour without a display. `CLAUDE.md` documents the full spec, the locked design decisions and the build log.
+The app ships with headless diagnostics — `--timer-test`, `--anchor-test`, `--reset-test`, `--blink-test`, `--screenshot <png>`, `--dump`, `--watch` — that prove the timer math, layout stability and reset behaviour without a display. The design and its verified underpinnings are documented in [`docs/`](docs/README.md).
 
 ## Platform notes
 
