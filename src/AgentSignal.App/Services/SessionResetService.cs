@@ -4,8 +4,10 @@ using AgentSignal.Core;
 namespace AgentSignal.App.Services;
 
 /// <summary>
-/// Manual reset (the escape hatch for the accepted Esc-mid-tool stuck-yellow gap, Decision #3's
-/// conservative guard): force every current session to GREEN as if its turn completed. The session
+/// Manual reset — THE way to clear a stuck yellow (an Esc-abort fires no Claude hook, so the light
+/// cannot clear itself; a stale-yellow auto-demotion was tried and reversed because it showed a
+/// false green during long no-hook thinking stretches): force every current session to GREEN as if
+/// its turn completed. The session
 /// files are rewritten in place through the same state contract the writer uses (state=green,
 /// event="ManualReset", ts=now, pid preserved), so the widget's normal machinery does the rest —
 /// each WorkTimer sees yellow→green and freezes at its current value (shown as the last run's time),

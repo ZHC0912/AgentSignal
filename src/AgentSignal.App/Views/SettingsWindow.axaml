@@ -111,7 +111,7 @@
       <Button Content="Reset — force all sessions green" Command="{Binding ResetSessionsCommand}"
               HorizontalAlignment="Left" />
       <TextBlock Foreground="#8C9AAB" FontSize="11" TextWrapping="Wrap"
-                 Text="Clears a stuck yellow (e.g. after Esc during a tool): all sessions show green with the timer frozen as the last run's time. No alert or blink. Global hotkey: Ctrl+Alt+R (disabled while this window is open)." />
+                 Text="Clears a stuck yellow (an Esc-abort fires no hook, so the light can't clear itself): all sessions show green with the timer frozen as the last run's time. No alert or blink. Global hotkey: Ctrl+Alt+R (disabled while this window is open)." />
     </StackPanel>
 
   </StackPanel>

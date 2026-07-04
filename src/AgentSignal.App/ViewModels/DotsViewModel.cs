@@ -34,9 +34,9 @@ public abstract partial class DotsViewModel : ObservableObject
     private DateTime _pulseUntilUtc = DateTime.MinValue;
 
     /// <summary>When true, the next entry into green starts no celebration blink. Set (every tick,
-    /// BEFORE assigning <see cref="State"/>) by the stale-yellow demotion: a demoted green is a guess,
-    /// not a confirmed finish, so it arrives quietly. A real green transition assigns this false first,
-    /// so the blink behaves exactly as before.</summary>
+    /// BEFORE assigning <see cref="State"/>) for a green that isn't a real finish — today that's the
+    /// manual reset (event=ManualReset): the user cleared the state, nothing completed. A real green
+    /// transition assigns this false first, so the blink behaves exactly as before.</summary>
     protected bool QuietGreen { get; set; }
 
     public bool IsGreenActive => State == AggregateState.Green;

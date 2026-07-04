@@ -23,28 +23,22 @@ public sealed class SessionRowViewModel : DotsViewModel
         Key = tool + "__" + sessionId;
     }
 
-    /// <summary>True while this row is displayed green only because its yellow went stale (Decision #3).
-    /// The underlying file still says yellow and the WorkTimer is still counting.</summary>
-    public bool IsDemoted { get; private set; }
-
-    /// <summary>Fold this poll's state into the row: advance the timer, recolour, refresh the text.</summary>
+    /// <summary>Fold this poll's state into the row: advance the timer, recolour, refresh the text.
+    /// The displayed colour IS the file state — no display-side guessing (Decision #3 was reversed:
+    /// the light only changes on real events; a stuck yellow is cleared manually via Ctrl+Alt+R).</summary>
     public void Observe(SessionState s, DateTime nowUtc)
     {
-        // The timer always observes the REAL file state — the stale-yellow demotion below is
-        // display-only, so a falsely demoted session keeps accumulating and snaps back intact.
         _timer.Observe(s, nowUtc);
-        AggregateState real = s.State switch
+        // No celebration blink for a green that isn't a real finish: a manually reset session
+        // (event=ManualReset) was cleared by the user, not completed.
+        QuietGreen = s.Event == SessionResetService.EventName;
+        State = s.State switch
         {
             "red" => AggregateState.Red,
             "yellow" => AggregateState.Yellow,
             "green" => AggregateState.Green,
             _ => AggregateState.Off,
         };
-        IsDemoted = real == AggregateState.Yellow && StaleYellow.IsDemoted(s, nowUtc);
-        // No celebration blink for a green that isn't a real finish: a demotion is a guess, and a
-        // manually reset session (event=ManualReset) was cleared by the user, not completed.
-        QuietGreen = IsDemoted || s.Event == SessionResetService.EventName;
-        State = IsDemoted ? AggregateState.Green : real;
         TimerText = _timer.HasValue ? FormatElapsed(_timer.Elapsed) : "";
         TickPulse(nowUtc);
     }

@@ -226,18 +226,18 @@ public partial class WidgetViewModel : DotsViewModel
         // (the turn was still working) the eventual real finish still fires its green alert.
         AggregateState prevReal = _realState;
         _realState = Aggregate(sessions);
-        // Quiet green = no celebration blink: a demoted-only green (a guess) and the green right
-        // after a manual reset (a clear, not a finish) both arrive without it.
-        QuietGreen = _realState != AggregateState.Green || _quietReset;
-        State = AggregateDisplayed(sessions, now);
+        // Quiet green = no celebration blink for the green right after a manual reset (a clear,
+        // not a finish). The displayed State IS the real aggregate — no display-side demotion
+        // (Decision #3 reversed: the light only changes on real events).
+        QuietGreen = _quietReset;
+        State = _realState;
         TimerText = DrivingTimerText(sessions);
         TickPulse(now);
         FireAlerts(sessions, prevReal, _realState);
         _quietReset = false; // one-shot, consumed by the pass that follows the reset
     }
 
-    // The aggregate of the raw file states, tracked separately from the displayed State so alert
-    // edges are computed on what the agents actually reported, not on the demoted display.
+    // The previous poll's aggregate, kept for computing the alert edges.
     private AggregateState _realState = AggregateState.Off;
 
     // Keys of sessions currently red that we've already alerted for — the per-session red debounce.
@@ -328,27 +328,4 @@ public partial class WidgetViewModel : DotsViewModel
         return AggregateState.Off;
     }
 
-    /// <summary>
-    /// Like <see cref="Aggregate"/> but with the stale-yellow display demotion applied per session
-    /// (Decision #3): a yellow that has gone stale counts as green, so a solo aborted session turns
-    /// the pill green instead of lying yellow forever. Red is untouched and still wins.
-    /// </summary>
-    public static AggregateState AggregateDisplayed(IReadOnlyList<SessionState> sessions, DateTime nowUtc)
-    {
-        bool anyYellow = false, anyGreen = false;
-        foreach (SessionState s in sessions)
-        {
-            switch (s.State)
-            {
-                case "red": return AggregateState.Red;
-                case "yellow":
-                    if (StaleYellow.IsDemoted(s, nowUtc)) anyGreen = true; else anyYellow = true;
-                    break;
-                case "green": anyGreen = true; break;
-            }
-        }
-        if (anyYellow) return AggregateState.Yellow;
-        if (anyGreen) return AggregateState.Green;
-        return AggregateState.Off;
-    }
 }

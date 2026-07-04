@@ -17,7 +17,6 @@ internal static class Program
     //   --dump               print the live sessions + aggregate colour and exit (diagnostic)
     //   --timer-test         replay the §8 permission scenario through the real WorkTimer (diagnostic)
     //   --blink-test         drive a real SessionRowViewModel to prove the green-blink start/cancel/settle
-    //   --demote-test        prove the stale-yellow→green display demotion (Decision #3) incl. guards
     //   --reset-test         prove the manual reset (force-green files + frozen timer, quiet, fresh next run)
     //   --watch [seconds]    run the real reconcile loop over live files, printing the model (diagnostic)
     //   --startup <on|off|status>  toggle/inspect the real launch-on-startup entry (diagnostic)
@@ -42,9 +41,6 @@ internal static class Program
 
         if (args.Length >= 1 && args[0] == "--blink-test")
             return BlinkTest();
-
-        if (args.Length >= 1 && args[0] == "--demote-test")
-            return DemoteTest();
 
         if (args.Length >= 1 && args[0] == "--reset-test")
             return ResetTest();
@@ -101,8 +97,7 @@ internal static class Program
                 {
                     string mode = r.IsYellowActive ? "running" : r.IsRedActive ? "paused" : "frozen/idle";
                     string blink = r.IsGreenPulsing ? " blink=ON" : "";
-                    string demoted = r.IsDemoted ? " stale-yellow→green" : "";
-                    Console.WriteLine($"    {r.SessionId,-38} {r.State,-6} {(r.HasTimer ? r.TimerText : "-"),-7} {mode}{blink}{demoted}");
+                    Console.WriteLine($"    {r.SessionId,-38} {r.State,-6} {(r.HasTimer ? r.TimerText : "-"),-7} {mode}{blink}");
                 }
             }
             System.Threading.Thread.Sleep(250);
@@ -263,64 +258,6 @@ internal static class Program
         }
         Console.WriteLine("(set BlinkOnGreenSeconds=0 in settings to disable the blink entirely.)");
         return 0;
-    }
-
-    // Proves the stale-yellow→green display demotion (Decision #3) with a controlled clock, through
-    // the REAL SessionRowViewModel + WorkTimer: an abandoned yellow demotes at 30s with the timer
-    // still counting underneath and no blink; a later event snaps it back with the timing intact
-    // (never reset); an in-flight tool (last event PreToolUse) and a red are NEVER demoted.
-    private static int DemoteTest()
-    {
-        var row = new SessionRowViewModel("claude", "demote");
-        var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        bool ok = true;
-
-        SessionState S(string state, string evt, int tsSec) => new()
-        {
-            Tool = "claude", SessionId = "demote", State = state, Event = evt,
-            Ts = (long)(t0.AddSeconds(tsSec) - DateTime.UnixEpoch).TotalSeconds,
-        };
-
-        void Check(string label, bool pass)
-        {
-            ok &= pass;
-            Console.WriteLine($"  {(pass ? "PASS" : "FAIL")}  {label}");
-        }
-
-        Console.WriteLine($"stale-yellow demotion test (threshold {StaleYellow.ThresholdSeconds}s, display-only)");
-
-        var working = S("yellow", "UserPromptSubmit", 0); // e.g. thinking/streaming, then Esc-aborted
-        row.Observe(working, t0);
-        Check("fresh yellow shows yellow", row.State == AggregateState.Yellow);
-
-        row.Observe(working, t0.AddSeconds(29));
-        Check("29s stale: still yellow (under threshold)", row.State == AggregateState.Yellow);
-
-        row.Observe(working, t0.AddSeconds(31));
-        Check("31s stale: DISPLAYED green (demoted)", row.State == AggregateState.Green && row.IsDemoted);
-        Check("  ...timer still counting underneath (0:31)", row.TimerText == "0:31");
-        Check("  ...no celebration blink on a demoted green", !row.IsGreenPulsing);
-        Check("  ...aggregate displays green while real aggregate stays yellow",
-            WidgetViewModel.AggregateDisplayed(new[] { working }, t0.AddSeconds(31)) == AggregateState.Green &&
-            WidgetViewModel.Aggregate(new[] { working }) == AggregateState.Yellow);
-
-        // The demotion was wrong (the session was actually still working): a real event arrives.
-        row.Observe(S("yellow", "PostToolUse", 40), t0.AddSeconds(40));
-        Check("later PostToolUse: snaps back to yellow", row.State == AggregateState.Yellow && !row.IsDemoted);
-        Check("  ...timer intact, never reset (0:40)", row.TimerText == "0:40");
-
-        // In-flight tool guard: last event PreToolUse = a tool may still be running. Never demote.
-        var inFlight = S("yellow", "PreToolUse", 45);
-        row.Observe(inFlight, t0.AddSeconds(300));
-        Check("255s-stale PreToolUse: NEVER demoted (install/build stays yellow)",
-            row.State == AggregateState.Yellow && !row.IsDemoted);
-
-        // Only yellow demotes: a red (waiting on you) sits red forever, §4 unchanged.
-        row.Observe(S("red", "PermissionRequest", 300), t0.AddSeconds(400));
-        Check("100s-stale red: stays red (only yellow demotes)", row.State == AggregateState.Red);
-
-        Console.WriteLine(ok ? "ALL PASS" : "FAILURES above");
-        return ok ? 0 : 1;
     }
 
     // Proves the manual reset (Feature A) headlessly, in two halves. FILE half: ForceGreen against a

@@ -11,11 +11,11 @@
   - Vertical orientation, smart pill direction (edge flip), collapsible timer, click rewire.
   - FIX 1 per-session timers in the expanded view; FIX 3 direction-aware chevron (`›`/`‹`);
     FIX 4 dots-pill fixed anchor (84×26 reservation slot).
-  - **FIX 2 resolved — locked Decision #3** (CLAUDE.md A.2): Esc-abort fires **no** hook (proven by a
-    live full-event capture), so a session yellow + no file update for **30s** is *displayed* green.
-    Display-only (WorkTimer untouched, snaps back intact), never demotes a dangling `PreToolUse`
-    (installs/builds stay yellow), no alert/blink on demotion. **Owner confirmed working live.**
-    Proven by `--demote-test`.
+  - **FIX 2: the 30s stale-yellow auto-demotion was built, then REVERSED and removed 2026-07-04**
+    (false green while Claude was still thinking — no hook fires while deliberating, so no threshold
+    works; see the reversed Decision #3 in CLAUDE.md A.2). **The light only changes on real events**;
+    an Esc-abort stuck-yellow is cleared manually via the reset (Ctrl+Alt+R / Settings button).
+    The zero-events-on-Esc investigation still stands as ground truth.
 - **Manual reset + modal Settings (2026-07-04): built, `--reset-test` ALL PASS** (CLAUDE.md A.9).
   Reset = Settings button or global **Ctrl+Alt+R** → all sessions forced green (files rewritten,
   timers frozen as the last run's time, no alert/blink); hotkey **verified live end-to-end**.
@@ -62,9 +62,9 @@ Check with `--startup status`; details in CLAUDE.md A.4.
 
 1. Live-eyeball the pill-width swap + the outstanding 6.6 behaviours (list above).
 2. Fix anything the eyeball turns up (visual-only tweaks live in `PillView.axaml` styles;
-   `--layout` / `--anchor-test` / `--demote-test` are the headless proofs).
+   `--layout` / `--anchor-test` / `--reset-test` are the headless proofs).
 3. On the owner's go-ahead: **Phase 7 packaging.**
 
 Useful diagnostics (no display needed): `--dump`, `--watch`, `--layout <png>`, `--anchor-test`,
-`--timer-test` (must stay 1:10), `--demote-test`, `--blink-test`, `--config`, `--startup status`.
+`--timer-test` (must stay 1:10), `--reset-test`, `--blink-test`, `--config`, `--startup status`.
 Full list in CLAUDE.md A.5; gotchas in A.6 (read before debugging anything visual).
