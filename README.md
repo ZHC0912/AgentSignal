@@ -46,7 +46,12 @@ Prefer just trying the widget? Grab the bare [`AgentSignal.exe`](https://github.
 
 ## How it works
 
-AgentSignal is **adapter-based** — the widget knows nothing about any particular agent. Each supported agent gets a small adapter that translates its lifecycle events into a shared state contract; **Claude Code is adapter #1**, and the same seam is designed to take Codex and others without touching the widget.
+AgentSignal is **adapter-based** — the widget knows nothing about any particular agent. Each supported agent gets a small adapter that translates its lifecycle events into a shared state contract; the same seam is designed to take Codex and others without touching the widget.
+
+**Supported agents:**
+
+- **Claude Code** (adapter #1) — full green/yellow/red lifecycle from its hooks.
+- **Google Antigravity** (adapter #2, **IDE only** — the CLI is unverified) — yellow from tool hooks + live polling of the IDE's conversation db; **red at approval prompts ends the instant you approve** (cleaner than hooks allow on Claude). Honest limits: the pill only lights once Antigravity actually does tool work (an idle/never-used conversation shows nothing — the IDE's turn-level hooks don't fire in current builds), and green settles **~5s after** a turn ends (quiescence debounce, since no end-of-turn event runs). Details in [`adapters/antigravity/`](adapters/antigravity/).
 
 ```
 AGENT (Claude Code)
