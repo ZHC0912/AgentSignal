@@ -114,8 +114,17 @@ internal static class AntigravityPoller
 
     // ==================================================================================== Poller ==
 
-    internal sealed class Poller(string sessionsDir, string conversationsDir, string tempDir)
+    internal sealed class Poller(string sessionsDir, string conversationsDir, string tempDir,
+                                 int quietGreenMs = Poller.DefaultQuietGreenMs)
     {
+        /// <summary>How long the db must sit fully quiescent (no running/streaming/pending step)
+        /// before a yellow session is declared green. The engine never actually spawns
+        /// invocation-level hooks (Stop/PreInvocation — verified live 2026-07-06), so turn-end
+        /// green comes from this debounce. Phase-0 timeline data shows mid-turn all-final gaps
+        /// (model spin-up after a tool) of at most ~1.9s, so 5s clears the worst observed case
+        /// ~2.7×; a pathological longer gap would flash green and self-correct to yellow.</summary>
+        public const int DefaultQuietGreenMs = 5000;
+
         private const string FilePrefix = "antigravity__";
         private readonly Dictionary<string, Conv> _convs = new();
 
@@ -126,6 +135,7 @@ internal static class AntigravityPoller
             public bool Active;                       // any step status 2 or 8
             public readonly HashSet<long> Ignored = new(); // stale 9s orphaned by a cancel-at-prompt
             public long LastDbChangeUnix;             // newest mtime among db/-wal at last read
+            public long QuietSinceMs;                 // first tick with no active/pending step; 0 = not quiet
         }
 
         /// <summary>One poll pass over every antigravity session file. Returns how many live session
@@ -247,13 +257,19 @@ internal static class AntigravityPoller
         {
             int newNines = conv.Nines.Count(n => !conv.Ignored.Contains(n));
 
+            // Track quiescence: the first tick where the db shows neither a pending approval nor a
+            // running/streaming step starts the quiet clock; any activity resets it.
+            long nowMs = Environment.TickCount64;
+            if (conv.Active || newNines > 0) conv.QuietSinceMs = 0;
+            else if (conv.QuietSinceMs == 0) conv.QuietSinceMs = nowMs;
+
             if (s.State == "red")
             {
                 if (newNines == 0)
                 {
                     // The prompt was answered: approve (9→2, a step now executes) resumes yellow at
                     // this very instant; deny (9→7) clears — yellow if the model is already
-                    // responding, green otherwise (Stop will confirm either way).
+                    // responding, green otherwise.
                     string next = conv.Active ? "yellow" : "green";
                     Write(file, s, next, "ApprovalResolved");
                     Log($"{id}: red -> {next} (approval resolved)");
@@ -266,18 +282,45 @@ internal static class AntigravityPoller
             if (newNines > 0)
             {
                 // A 9 already sitting in a db that hasn't been written since the session went green
-                // on Stop is an orphan from a cancel at the prompt — remember it, never red on it.
-                // (A REAL new prompt writes the db AFTER the Stop, so it always passes this gate.)
-                if (s.State == "green" && s.Event == "Stop" && conv.LastDbChangeUnix <= s.Ts)
+                // is an orphan from a cancel at the prompt — remember it, never red on it.
+                // (A REAL new prompt writes the db AFTER the green, so it always passes this gate.)
+                if (s.State == "green" && conv.LastDbChangeUnix <= s.Ts)
                 {
                     conv.Ignored.UnionWith(conv.Nines);
-                    Log($"{id}: ignoring {conv.Nines.Count} stale 9(s) left behind before Stop");
-                    if (print) Console.WriteLine($"{id}: {conv.Nines.Count} stale 9(s) predate Stop — ignored, stays {s.State}");
+                    Log($"{id}: ignoring {conv.Nines.Count} stale 9(s) predating the green");
+                    if (print) Console.WriteLine($"{id}: {conv.Nines.Count} stale 9(s) predate the green — ignored, stays {s.State}");
                     return;
                 }
                 Write(file, s, "red", "ApprovalPending");
                 Log($"{id}: {s.State} -> red (approval prompt showing)");
                 if (print) Console.WriteLine($"{id}: {s.State} -> red (approval prompt showing)");
+                return;
+            }
+
+            // Hook-missed activity: the engine only spawns TOOL hooks, so a no-tool stretch (model
+            // streaming a chat answer) shows yellow via the db instead. Current-read state, so no
+            // staleness gate is needed — if a step is running/streaming, the turn IS running.
+            if (conv.Active)
+            {
+                if (s.State == "green")
+                {
+                    Write(file, s, "yellow", "DbActive");
+                    Log($"{id}: green -> yellow (db shows activity)");
+                    if (print) Console.WriteLine($"{id}: green -> yellow (db shows activity)");
+                }
+                else if (print) Console.WriteLine($"{id}: {s.State} (db active)");
+                return;
+            }
+
+            // Turn-end green: invocation hooks (Stop) never actually run in this engine build, so a
+            // yellow session goes green once the db has been fully quiescent for the debounce
+            // window (see DefaultQuietGreenMs — mid-turn model-spin-up gaps are far shorter).
+            // Covers normal completion AND cancel (a cancel finalises its steps to 6, then quiesces).
+            if (s.State == "yellow" && conv.QuietSinceMs != 0 && nowMs - conv.QuietSinceMs >= quietGreenMs)
+            {
+                Write(file, s, "green", "DbQuiet");
+                Log($"{id}: yellow -> green (db quiescent {quietGreenMs}ms)");
+                if (print) Console.WriteLine($"{id}: yellow -> green (db quiescent)");
                 return;
             }
 
@@ -353,13 +396,14 @@ internal static class AntigravityPoller
                 Exec(conn, "CREATE TABLE steps (\"idx\" INTEGER, step_type INTEGER, status INTEGER)");
                 Exec(conn, "INSERT INTO steps VALUES (1, 0, 3), (2, 0, 8)"); // done + streaming
 
-                var poller = new Poller(sessions, convs, tmp);
+                const int quietMs = 400; // fast debounce so the test runs in ~2s (live default 5s)
+                var poller = new Poller(sessions, convs, tmp, quietMs);
                 long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-                // Turn running (PreInvocation wrote yellow), model streaming: stays yellow.
-                PlantSession(sessionFile, "yellow", "PreInvocation", Environment.ProcessId, now);
+                // Turn running (PreToolUse wrote yellow), model streaming: stays yellow.
+                PlantSession(sessionFile, "yellow", "PreToolUse", Environment.ProcessId, now);
                 poller.Tick(print: false);
-                all &= Check("streaming turn stays yellow", ReadState(sessionFile) is ("yellow", "PreInvocation"));
+                all &= Check("streaming turn stays yellow", ReadState(sessionFile) is ("yellow", "PreToolUse"));
 
                 // The approval prompt appears (a status-9 step lands): red.
                 Exec(conn, "INSERT INTO steps VALUES (3, 1, 9)");
@@ -378,50 +422,80 @@ internal static class AntigravityPoller
                 all &= Check("approve (9->2) -> yellow at the approval instant",
                     ReadState(sessionFile) is ("yellow", "ApprovalResolved"));
 
-                // Mid-turn gap: every step momentarily completed — must NOT write green (Stop's job).
+                // Mid-turn gap: every step momentarily completed — must NOT green inside the
+                // debounce window (that gap is just the model spinning up its next invocation).
                 Exec(conn, "UPDATE steps SET status = 3");
                 Touch(db);
                 poller.Tick(print: false);
-                all &= Check("all-completed mid-turn gap does NOT go green",
+                all &= Check("all-completed gap does NOT green within the debounce",
                     ReadState(sessionFile) is ("yellow", "ApprovalResolved"));
 
-                // DENY path: prompt shows (red), user denies (9→7) → clears immediately.
-                Exec(conn, "INSERT INTO steps VALUES (4, 1, 9)");
+                // Activity resumes inside the window: the quiet clock resets, still yellow.
+                Exec(conn, "INSERT INTO steps VALUES (4, 0, 8)");
                 Touch(db);
                 poller.Tick(print: false);
-                all &= Check("second prompt -> red again", ReadState(sessionFile) is ("red", "ApprovalPending"));
-                Exec(conn, "UPDATE steps SET status = 7 WHERE \"idx\" = 4");
+                all &= Check("streaming resumes -> still yellow (quiet clock reset)",
+                    ReadState(sessionFile) is ("yellow", "ApprovalResolved"));
+
+                // Turn truly ends: quiescent past the debounce -> green (Stop never runs in this
+                // engine build, so the debounced db-quiescence IS the green edge).
+                Exec(conn, "UPDATE steps SET status = 3 WHERE \"idx\" = 4");
                 Touch(db);
+                poller.Tick(print: false); // starts the quiet clock
+                Thread.Sleep(quietMs + 200);
+                poller.Tick(print: false);
+                all &= Check("quiescent past debounce -> green (turn end without Stop)",
+                    ReadState(sessionFile) is ("green", "DbQuiet"));
+
+                // DENY path: a NEW prompt (db written after the green) -> red; deny (9→7) clears.
+                Exec(conn, "INSERT INTO steps VALUES (5, 1, 9)");
+                Bump(db, 10);
+                poller.Tick(print: false);
+                all &= Check("new prompt after green -> red", ReadState(sessionFile) is ("red", "ApprovalPending"));
+                Exec(conn, "UPDATE steps SET status = 7 WHERE \"idx\" = 5");
+                Bump(db, 11);
                 poller.Tick(print: false);
                 all &= Check("deny (9->7) clears red (nothing running -> green)",
                     ReadState(sessionFile) is ("green", "ApprovalResolved"));
 
-                // Cancel-at-prompt ghost: a 9 lands, then Stop fires (cancel) leaving it behind.
-                // The idle green session must NOT be re-reddened by the dead prompt.
-                Exec(conn, "INSERT INTO steps VALUES (5, 1, 9)");
-                Touch(db);
-                PlantSession(sessionFile, "green", "Stop", Environment.ProcessId,
-                    DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 2); // Stop written after that db change
-                poller.Tick(print: false);
-                all &= Check("stale 9 left by cancel-at-prompt stays green",
-                    ReadState(sessionFile) is ("green", "Stop"));
-
-                // ...but a genuinely NEW prompt (db written AFTER the Stop) still reds.
+                // Cancel-at-prompt ghost: a 9 lingers in a db not written since the session went
+                // green. The idle session must NOT be re-reddened by the dead prompt.
                 Exec(conn, "INSERT INTO steps VALUES (6, 1, 9)");
-                File.SetLastWriteTimeUtc(db, DateTime.UtcNow.AddSeconds(10));
-                string wal = db + "-wal";
-                if (File.Exists(wal)) File.SetLastWriteTimeUtc(wal, DateTime.UtcNow.AddSeconds(10));
+                Bump(db, 12);
+                PlantSession(sessionFile, "green", "DbQuiet", Environment.ProcessId,
+                    DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 20); // green recorded after that db write
                 poller.Tick(print: false);
-                all &= Check("NEW 9 written after Stop -> red (stale-ignore doesn't overreach)",
+                all &= Check("stale 9 predating the green stays green",
+                    ReadState(sessionFile) is ("green", "DbQuiet"));
+
+                // ...but a genuinely NEW prompt (db written AFTER the green) still reds.
+                Exec(conn, "INSERT INTO steps VALUES (7, 1, 9)");
+                Bump(db, 30);
+                poller.Tick(print: false);
+                all &= Check("NEW 9 written after the green -> red (stale-ignore doesn't overreach)",
                     ReadState(sessionFile) is ("red", "ApprovalPending"));
-                Exec(conn, "UPDATE steps SET status = 6 WHERE \"idx\" IN (5, 6)"); // cancel both
-                Touch(db);
+                Exec(conn, "UPDATE steps SET status = 6 WHERE \"idx\" IN (6, 7)"); // cancel both
+                Bump(db, 31);
                 poller.Tick(print: false);
                 all &= Check("cancelled prompts (9->6) clear red",
                     ReadState(sessionFile) is ("green", "ApprovalResolved"));
 
+                // Hook-missed activity: the engine only spawns TOOL hooks, so a no-tool streaming
+                // stretch must turn a green session yellow from the db alone.
+                Exec(conn, "INSERT INTO steps VALUES (8, 0, 8)");
+                Bump(db, 32);
+                poller.Tick(print: false);
+                all &= Check("green + streaming step -> yellow (no-tool turn, db-driven)",
+                    ReadState(sessionFile) is ("yellow", "DbActive"));
+                Exec(conn, "UPDATE steps SET status = 3 WHERE \"idx\" = 8");
+                Bump(db, 33);
+                poller.Tick(print: false); // starts the quiet clock
+                Thread.Sleep(quietMs + 200);
+                poller.Tick(print: false);
+                all &= Check("no-tool turn quiesces -> green", ReadState(sessionFile) is ("green", "DbQuiet"));
+
                 // Ghost cleanup: the IDE process is gone -> the session file is removed.
-                PlantSession(sessionFile, "green", "Stop", FindDeadPid(), now);
+                PlantSession(sessionFile, "green", "DbQuiet", FindDeadPid(), now);
                 poller.Tick(print: false);
                 all &= Check("dead IDE pid -> session file removed", !File.Exists(sessionFile));
 
@@ -457,6 +531,16 @@ internal static class AntigravityPoller
             File.SetLastWriteTimeUtc(db, DateTime.UtcNow);
             string wal = db + "-wal";
             if (File.Exists(wal)) File.SetLastWriteTimeUtc(wal, DateTime.UtcNow);
+        }
+
+        /// <summary>Set the db mtime N seconds into the future — a deterministic "this write happened
+        /// AFTER the session file's ts" for exercising the stale-9 gate in both directions.</summary>
+        private static void Bump(string db, int seconds)
+        {
+            DateTime t = DateTime.UtcNow.AddSeconds(seconds);
+            File.SetLastWriteTimeUtc(db, t);
+            string wal = db + "-wal";
+            if (File.Exists(wal)) File.SetLastWriteTimeUtc(wal, t);
         }
 
         private static void PlantSession(string path, string state, string evt, int pid, long ts)
