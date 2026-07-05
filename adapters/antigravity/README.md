@@ -64,6 +64,12 @@ literally — Phase 0 §5), so the install refuses a home directory whose path c
 If the Phase 0 logging hooks are still installed, remove them first:
 `adapters/antigravity/phase0/uninstall-phase0.ps1`.
 
+**hooks.json must be UTF-8 *without* a BOM.** The engine's Go JSON parser rejects a BOM'd file
+outright (`invalid character '﻿'` in language_server.log) and then loads **zero** hooks from
+it — observed live 2026-07-06 after a manual edit with PowerShell's `Set-Content -Encoding utf8`,
+which writes a BOM. The installer's own writes are BOM-less; if you ever hand-edit the file, save
+it BOM-free (`[IO.File]::WriteAllText` with `UTF8Encoding($false)`).
+
 ## Diagnostics
 
 - `AgentSignal.Writer poll antigravity --test` — full approval-lifecycle self-test against a real
