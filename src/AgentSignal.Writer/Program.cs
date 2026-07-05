@@ -126,18 +126,49 @@ internal static class Program
         // Only read when stdin is actually piped (a hook), so a manual run never blocks on the console.
         // Read the raw stream as UTF-8 rather than Console.In, which would decode using the console
         // codepage and mangle the UTF-8 JSON that hooks deliver.
+        //
+        // NEVER block on a pipe that stays open: Antigravity holds the hook's stdin pipe without
+        // closing it (observed live 2026-07-05 — a blocking ReadToEnd wedged the writer until the
+        // engine's 10s hook timeout killed it, before any state was written, so no session file ever
+        // appeared). Reads run async with a hard deadline; on timeout the writer proceeds with
+        // whatever bytes arrived (usually the whole payload) — worst case the session id falls back
+        // to the env var / newest-db resolution. Claude closes stdin, so it always EOFs well inside
+        // the deadline.
         try
         {
             if (!Console.IsInputRedirected) return "";
             using Stream stdin = Console.OpenStandardInput();
-            using var reader = new StreamReader(stdin, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            return reader.ReadToEnd();
+            var buffer = new byte[64 * 1024];
+            int total = 0;
+            DateTime deadline = DateTime.UtcNow.AddSeconds(2);
+            bool timedOut = false;
+            while (total < buffer.Length)
+            {
+                Task<int> read = stdin.ReadAsync(buffer, total, buffer.Length - total);
+                TimeSpan left = deadline - DateTime.UtcNow;
+                if (left <= TimeSpan.Zero || !read.Wait(left)) { timedOut = true; break; } // pipe held open — take what we have
+                int n = read.Result;
+                if (n <= 0) break; // EOF
+                total += n;
+            }
+            if (Environment.GetEnvironmentVariable("AGENTSIGNAL_DEBUG") == "1")
+            {
+                try
+                {
+                    AgentPaths.EnsureRoot();
+                    File.AppendAllText(Path.Combine(AgentPaths.Root, "writer-stdin.log"),
+                        $"{DateTimeOffset.UtcNow:o} stdin {total} bytes ({(timedOut ? "deadline hit — pipe held open" : "EOF")})\n");
+                }
+                catch { /* debug only */ }
+            }
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, total);
         }
         catch { return ""; }
     }
 
     private static JsonDocument? TryParse(string s)
     {
+        s = s.TrimStart('﻿'); // a BOM ahead of the JSON breaks Parse (some shells add one)
         if (string.IsNullOrWhiteSpace(s)) return null;
         try { return JsonDocument.Parse(s); } catch { return null; }
     }

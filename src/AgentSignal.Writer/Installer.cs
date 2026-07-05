@@ -102,7 +102,15 @@ internal static class Installer
         string srcFull = Path.GetFullPath(src);
         string destFull = Path.GetFullPath(dest);
         if (!string.Equals(srcFull, destFull, StringComparison.OrdinalIgnoreCase))
+        {
             File.Copy(srcFull, destFull, overwrite: true);
+            // Native sidecars: single-file publish puts native libraries BESIDE the exe (e_sqlite3
+            // for the Antigravity poller's SQLite reads) — they must travel with it or the poller
+            // dies on its first db open.
+            string srcDir = Path.GetDirectoryName(srcFull)!;
+            foreach (string lib in Directory.EnumerateFiles(srcDir, "*.dll"))
+                File.Copy(lib, Path.Combine(AgentPaths.Root, Path.GetFileName(lib)), overwrite: true);
+        }
         return destFull;
     }
 
