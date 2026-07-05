@@ -29,6 +29,7 @@ public abstract partial class DotsViewModel : ObservableObject
     /// <summary>Lay the three dots out in a row (Horizontal) or a column (Vertical). Set from config by
     /// <see cref="WidgetViewModel"/> and propagated to each session row so every DotsView matches.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RowTimerHorizontal))]
     private Orientation _dotsOrientation = Orientation.Horizontal;
 
     private DateTime _pulseUntilUtc = DateTime.MinValue;
@@ -38,6 +39,13 @@ public abstract partial class DotsViewModel : ObservableObject
     /// manual reset (event=ManualReset): the user cleared the state, nothing completed. A real green
     /// transition assigns this false first, so the blink behaves exactly as before.</summary>
     protected bool QuietGreen { get; set; }
+
+    /// <summary>Where a per-session row's timer chip sits inside its reserved slot below the dots:
+    /// pinned LEFT under a horizontal dots row (matching the single pill's timer, which pins to the
+    /// strip's left edge), centred under a vertical dots column.</summary>
+    public HorizontalAlignment RowTimerHorizontal =>
+        DotsOrientation == Orientation.Vertical ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+
 
     public bool IsGreenActive => State == AggregateState.Green;
     public bool IsYellowActive => State == AggregateState.Yellow;

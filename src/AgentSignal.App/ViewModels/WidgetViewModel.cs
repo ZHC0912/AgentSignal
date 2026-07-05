@@ -40,11 +40,26 @@ public partial class WidgetViewModel : DotsViewModel
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsTimerShown))]
     [NotifyPropertyChangedFor(nameof(IsTimerChevronShown))]
+    [NotifyPropertyChangedFor(nameof(IsStripGearVisible))]
     private bool _isExpanded;
 
     /// <summary>The settings gear is revealed by clicking the dots (independent of sessions).</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsStripGearVisible))]
+    [NotifyPropertyChangedFor(nameof(IsEndGearVisible))]
     private bool _isGearVisible;
+
+    /// <summary>The attach-strip gear shows only for the single aggregate pill. In the expanded view
+    /// the gear joins the session stack instead: HORIZONTAL puts it INSIDE the bottom row's band
+    /// (right-aligned beside that row's timer — see <see cref="SessionRowViewModel.ShowsGear"/> — so
+    /// the timer appearing/disappearing can never displace it); VERTICAL keeps it after the last
+    /// column (<see cref="IsEndGearVisible"/>), where the columns' heights can't move it either.</summary>
+    public bool IsStripGearVisible => IsGearVisible && !IsExpanded;
+
+    /// <summary>The gear pill at the END of the expanded session stack — vertical orientation only
+    /// (top-aligned beside the last column, a spot no timer can displace). Horizontal instead anchors
+    /// the gear inside the bottom row's band via <see cref="SessionRowViewModel.ShowsGear"/>.</summary>
+    public bool IsEndGearVisible => IsGearVisible && IsVertical;
 
     // Vertical (dots stacked in a column) vs horizontal (a row). Driven from config, applied live.
     [ObservableProperty]
@@ -57,6 +72,7 @@ public partial class WidgetViewModel : DotsViewModel
     [NotifyPropertyChangedFor(nameof(GearVertical))]
     [NotifyPropertyChangedFor(nameof(GearMargin))]
     [NotifyPropertyChangedFor(nameof(TimerChevronGlyph))]
+    [NotifyPropertyChangedFor(nameof(IsEndGearVisible))]
     private bool _isVertical;
 
     // Smart pill direction (Behaviour B): the window sets this true when the widget is near the far
@@ -166,10 +182,28 @@ public partial class WidgetViewModel : DotsViewModel
         DotsOrientation = o;
         foreach (SessionRowViewModel row in Sessions)
             row.DotsOrientation = o;
+        UpdateRowGear();
+    }
+
+    partial void OnIsGearVisibleChanged(bool value) => UpdateRowGear();
+
+    /// <summary>Anchor the expanded-view gear for HORIZONTAL orientation: exactly the LAST row (and
+    /// only while the gear is revealed) carries it inside its band. Re-run whenever the row list, the
+    /// gear visibility or the orientation changes — the last row moves as sessions come and go.
+    /// Vertical rows never carry it (the stack-end gear, <see cref="IsEndGearVisible"/>, does).</summary>
+    private void UpdateRowGear()
+    {
+        bool show = IsGearVisible && !IsVertical;
+        for (int i = 0; i < Sessions.Count; i++)
+            Sessions[i].ShowsGear = show && i == Sessions.Count - 1;
     }
 
     partial void OnIsTimerCollapsedChanged(bool value)
     {
+        // One collapse preference for the whole widget: the expanded rows mirror it (their chips and
+        // chevrons swap together, and the state carries over when sessions drop back to one).
+        foreach (SessionRowViewModel row in Sessions)
+            row.IsTimerCollapsed = value;
         if (_initializing || !_live) return;
         ConfigService.Instance.Update(c => c.TimerCollapsed = value); // persist across relaunch
     }
@@ -209,7 +243,11 @@ public partial class WidgetViewModel : DotsViewModel
             SessionRowViewModel? row = FindRow(key);
             if (row is null)
             {
-                row = new SessionRowViewModel(s.Tool, s.SessionId) { DotsOrientation = DotsOrientation };
+                row = new SessionRowViewModel(s.Tool, s.SessionId)
+                {
+                    DotsOrientation = DotsOrientation,
+                    IsTimerCollapsed = IsTimerCollapsed,
+                };
                 Sessions.Add(row);
             }
             row.Observe(s, now);
@@ -217,6 +255,7 @@ public partial class WidgetViewModel : DotsViewModel
         for (int i = Sessions.Count - 1; i >= 0; i--)
             if (!seen.Contains(Sessions[i].Key))
                 Sessions.RemoveAt(i);
+        UpdateRowGear(); // adds/removals can change which row is last (the gear's horizontal anchor)
 
         SessionCount = sessions.Count;
         IsExpanded = sessions.Count > 1; // per-session rows appear automatically for 2+ sessions

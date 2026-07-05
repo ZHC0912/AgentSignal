@@ -133,10 +133,12 @@
       </Panel>
       <!-- Settings gear (revealed by clicking the dots). Horizontal: pinned to the strip's far end,
            opposite the timer. Vertical: GearMargin drops it directly below the timer/chevron slot so
-           the two pills cluster tightly beside the dots column. -->
+           the two pills cluster tightly beside the dots column. Strip copy only for the single
+           aggregate pill — the expanded view anchors its own gear in the bottom row's band
+           (horizontal) or after the last column (vertical). -->
       <Border Classes="pill gear" Margin="{Binding GearMargin}"
               HorizontalAlignment="{Binding GearHorizontal}" VerticalAlignment="{Binding GearVertical}"
-              IsVisible="{Binding IsGearVisible}">
+              IsVisible="{Binding IsStripGearVisible}">
         <Button Classes="flat glyph" Content="&#x2699;" ToolTip.Tip="Settings" Click="OnGearClick" />
       </Border>
     </Grid>
@@ -148,32 +150,90 @@
         <views:DotsView DataContext="{Binding}" />
       </Border>
 
-      <!-- Expanded: one row per live session. Each row carries its OWN independent timer (from that
-           session's WorkTimer) beside/below its dots, so no row's time changes when another ticks.
-           The row lays dots + timer along the dots axis (timer to the right when horizontal, below
-           when vertical); rows are spaced apart so each timer reads clearly and doesn't crowd. -->
-      <ItemsControl IsVisible="{Binding IsExpanded}" ItemsSource="{Binding Sessions}"
-                    HorizontalAlignment="Left" VerticalAlignment="Top">
-        <ItemsControl.ItemsPanel>
-          <ItemsPanelTemplate>
-            <StackPanel Orientation="{Binding SessionsStackOrientation}" Spacing="12" />
-          </ItemsPanelTemplate>
-        </ItemsControl.ItemsPanel>
-        <ItemsControl.ItemTemplate>
-          <DataTemplate>
-            <StackPanel Orientation="{Binding DotsOrientation}" Spacing="7"
-                        HorizontalAlignment="Center" VerticalAlignment="Center">
-              <Border Classes="pill dots" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <views:DotsView />
-              </Border>
-              <Border Classes="pill timer" IsVisible="{Binding HasTimer}"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Classes="timertext" Text="{Binding TimerText}" />
-              </Border>
-            </StackPanel>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-      </ItemsControl>
+      <!-- Expanded: one row per live session, then the settings gear attached to the END of the
+           stack (below the bottom pill when horizontal, after the last column when vertical) so it
+           reads as part of the stack instead of floating alone at the strip's far corner. Stack
+           spacing is TIGHT (4, the single pill's cluster gap): rows sit snug against each other,
+           and only a row actually showing its timer adds room below its dots (see the template). -->
+      <StackPanel Orientation="{Binding SessionsStackOrientation}" Spacing="4"
+                  IsVisible="{Binding IsExpanded}"
+                  HorizontalAlignment="Left" VerticalAlignment="Top">
+        <ItemsControl ItemsSource="{Binding Sessions}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Orientation="{Binding SessionsStackOrientation}" Spacing="4" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <!-- Each row carries its OWN independent timer (from that session's WorkTimer) BELOW
+                   its dots in both orientations, matching the single pill. The timer slot renders
+                   ONLY while that session has a timer (dynamic spacing: a hidden slot takes no
+                   space, so timer-less rows sit snug against the next row; rows stay dots-top
+                   aligned side-by-side because the row anchors Top and the slot hangs below).
+                   Slot height 22 = the chip's MinHeight; margin 3 = the single pill's dots↔strip
+                   gap (AttachMargin). -->
+              <StackPanel Orientation="Vertical" Spacing="0"
+                          HorizontalAlignment="Center" VerticalAlignment="Top">
+                <Border Classes="pill dots" HorizontalAlignment="Center" VerticalAlignment="Center">
+                  <views:DotsView />
+                </Border>
+                <!-- Chip pins LEFT under horizontal dots — matching the single pill's left-pinned
+                     timer — and centres under a vertical column. Like the strip slot, the chip and
+                     its collapse chevron swap IN PLACE here (same alignment, both click-consuming
+                     via the shared OnTimerClick, which toggles the widget's ONE persisted collapse
+                     preference — all rows and the single pill follow together). The band gates on
+                     HasTimer OR ShowsGear (the LAST horizontal row carries the gear in here), so
+                     the dynamic tight spacing is unchanged for plain rows whether the row currently
+                     shows the chip or the chevron. -->
+                <!-- Known accepted limit (vertical only): a chip WIDER than the dots pill — h:mm:ss,
+                     a 1h+ session — widens its whole column by a few px (constraining the band
+                     instead clips the time text, which is worse). Every m:ss/mm:ss chip is narrower
+                     than the dots pill, so nothing moves in normal use. -->
+                <Panel Height="22" Margin="0,3,0,0" IsVisible="{Binding IsRowBandShown}">
+                  <Border Classes="pill timer" IsVisible="{Binding IsRowTimerShown}"
+                          HorizontalAlignment="{Binding RowTimerHorizontal}" VerticalAlignment="Center">
+                    <Button Classes="flat" ToolTip.Tip="Hide timer" Click="OnTimerClick">
+                      <TextBlock Classes="timertext" Text="{Binding TimerText}" />
+                    </Button>
+                  </Border>
+                  <!-- Height 22 overrides the gear pill's 26 so the chevron fits the row slot snugly.
+                       Normal UI font, not the icon font — see the A.6 wide-fallback gotcha. Fixed '›'
+                       (the timer reappears in place below the dots, so there is no direction to point
+                       the way the strip chevron does). -->
+                  <Border Classes="pill gear" Height="22" IsVisible="{Binding IsRowTimerChevronShown}"
+                          HorizontalAlignment="{Binding RowTimerHorizontal}" VerticalAlignment="Center">
+                    <Button Classes="flat" ToolTip.Tip="Show timer" Click="OnTimerClick">
+                      <TextBlock Text="&#x203A;" FontFamily="Segoe UI, Inter" FontSize="15"
+                                 Foreground="#B0FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Button>
+                  </Border>
+                  <!-- Settings gear, HORIZONTAL orientation only, LAST row only (ShowsGear — set by
+                       the widget VM). Pinned RIGHT opposite the left-pinned timer — the single pill's
+                       strip pattern. Living INSIDE the band makes the band its fixed anchor: the
+                       timer chip/chevron appearing, disappearing or changing width can never push
+                       the gear (the same reservation idea that keeps the strip dots stable). The
+                       band renders whenever ShowsGear is on, so the gear sits at this exact spot
+                       even when the row has no timer at all. Height 22 fits the band, like the
+                       chevron above. -->
+                  <Border Classes="pill gear" Height="22" IsVisible="{Binding ShowsGear}"
+                          HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Classes="flat glyph" Content="&#x2699;" ToolTip.Tip="Settings" Click="OnGearClick" />
+                  </Border>
+                </Panel>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <!-- Gear at the stack's end — VERTICAL orientation only (IsEndGearVisible): top-aligned
+             beside the last column, a spot the columns' timers can't displace (a timer only grows
+             a column's height, never its width). Horizontal instead anchors the gear INSIDE the
+             bottom row's band (ShowsGear above), so the last row's timer can't push it down. -->
+        <Border Classes="pill gear" IsVisible="{Binding IsEndGearVisible}"
+                HorizontalAlignment="Right" VerticalAlignment="Top">
+          <Button Classes="flat glyph" Content="&#x2699;" ToolTip.Tip="Settings" Click="OnGearClick" />
+        </Border>
+      </StackPanel>
     </Panel>
   </DockPanel>
 </UserControl>

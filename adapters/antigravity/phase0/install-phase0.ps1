@@ -12,6 +12,12 @@ param([string]$Workspace)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script = (Resolve-Path (Join-Path $here 'log-event.ps1')).Path -replace '\\', '/'
+# Antigravity splits the hook command itself and does NOT strip quotes — a quoted path reaches
+# PowerShell with literal quote characters ("Illegal characters in path", every hook fails; see
+# FINDINGS.md §5). So the path must go in UNQUOTED, which only works while it contains no spaces.
+if ($script -match ' ') {
+    throw "log-event.ps1 resolves to '$script', which contains a space. Antigravity passes quotes literally, so hook paths cannot be quoted — move the repo (or copy log-event.ps1) to a space-free path and rerun."
+}
 
 # Schema per the documented working example: top level = hook NAME, then event -> matcher groups.
 # Every event gets a matcher of ".*" (harmless if ignored for non-tool events) and passes the
@@ -25,7 +31,7 @@ foreach ($e in $events) {
             hooks = @(
                 [ordered]@{
                     type    = 'command'
-                    command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$script`" $e"
+                    command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script $e"
                     timeout = 10
                 }
             )
