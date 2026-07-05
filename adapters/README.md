@@ -12,8 +12,8 @@ Keep all adapter-specific files under `adapters/<tool>/`.
 | Adapter | State | Notes |
 |---------|-------|-------|
 | [`claude/`](claude/) | ✅ implemented (#1) | Event order verified in Phase 0; mapping locked. |
-| `codex/`  | planned | Easy second adapter — see below. |
-| `antigravity/` | deferred | Feasible but more work — see below. |
+| [`antigravity/`](antigravity/) | ✅ implemented (#2) — **IDE only** | Hooks (`PreInvocation`→yellow, `Stop`→green) + a conversation-db poller for red; Phase 0 findings locked. The Antigravity **CLI is future/unverified**. |
+| `codex/`  | planned | Easy third adapter — see below. |
 
 ## Codex (OpenAI) — planned
 
@@ -24,9 +24,11 @@ same writer with `codex` as the tool arg (`AgentSignal.Writer codex <state>`). T
 tool-agnostic, so this should only need a `codex/hooks.template.json` plus wiring it as an embedded
 template and confirming Codex's real event order (a mini Phase 0).
 
-## Antigravity (Google) — deferred
+## Antigravity (Google) — implemented (IDE only)
 
-Feasible but more work. It has hooks (`.agents/hooks.json`) and a Python SDK, but a different /
-consolidated event set, and the permission/approval signal (the red light) is less cleanly exposed —
-may need extra mapping or a fallback. It is also new and changing fast. Nothing in the core or widget
-blocks it; defer until the event model settles.
+Yellow/green come from hooks (`PreInvocation`/`Stop` — and `Stop` fires on cancel, so no
+stuck-yellow); **red comes from polling the conversation SQLite** (`steps.status` 9 = awaiting
+approval), because no hook fires around an approval prompt. Red ends at the approval instant —
+cleaner than Claude's. Full design and constraints in [`antigravity/README.md`](antigravity/README.md);
+the ground truth is [`antigravity/phase0/FINDINGS.md`](antigravity/phase0/FINDINGS.md).
+The Antigravity **CLI** remains future/unverified.

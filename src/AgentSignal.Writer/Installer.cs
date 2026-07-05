@@ -18,6 +18,9 @@ internal static class Installer
         string deployed = DeploySelf();
         string writerForHook = deployed.Replace('\\', '/'); // forward slashes work in bash & PowerShell
 
+        if (string.Equals(tool, AntigravityAdapter.ToolName, StringComparison.OrdinalIgnoreCase))
+            return RunAntigravity(deployed, writerForHook);
+
         string template = LoadTemplate(tool).Replace("{{WRITER_PATH}}", writerForHook);
         if (JsonNode.Parse(template) is not JsonObject hooks)
         {
@@ -30,6 +33,59 @@ internal static class Installer
 
         Console.WriteLine($"AgentSignal: writer deployed to {deployed}");
         Console.WriteLine($"AgentSignal: '{tool}' hooks merged into {settingsPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Antigravity (IDE only — the CLI is future/unverified). Installs to exactly ONE hook scope,
+    /// the global ~/.gemini/config/hooks.json: the engine also loads the workspace scope
+    /// (&lt;root&gt;/.agents/hooks.json) and BOTH fire for every event, so registering twice would
+    /// double-fire the writer (Phase 0 §1). The hook command path must be UNQUOTED — Antigravity
+    /// splits the command itself and passes quote characters through literally, which breaks the
+    /// invocation (Phase 0 §5) — so a deployed path containing a space cannot be installed.
+    /// </summary>
+    private static int RunAntigravity(string deployed, string writerForHook)
+    {
+        if (writerForHook.Contains(' '))
+        {
+            Console.Error.WriteLine(
+                $"AgentSignal: the writer deployed to '{deployed}', which contains a space. " +
+                "Antigravity passes quotes literally, so hook command paths cannot be quoted — " +
+                "the install cannot proceed from a home directory with spaces in its path.");
+            return 1;
+        }
+
+        string template = LoadTemplate(AntigravityAdapter.ToolName).Replace("{{WRITER_PATH}}", writerForHook);
+        if (JsonNode.Parse(template) is not JsonObject incoming)
+        {
+            Console.Error.WriteLine("AgentSignal: antigravity hook template is not a JSON object.");
+            return 1;
+        }
+
+        // hooks.json shape: { "<hook name>": { "<Event>": [ { matcher, hooks: [...] } ] } }.
+        // Merge = set/replace our own top-level "agentsignal" key (idempotent; re-install updates a
+        // moved writer path) while preserving any other hook entries the user has.
+        string hooksPath = Path.Combine(AgentPaths.Home, ".gemini", "config", "hooks.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(hooksPath)!);
+        JsonObject root = new();
+        try
+        {
+            if (File.Exists(hooksPath) &&
+                JsonNode.Parse(File.ReadAllText(hooksPath)) is JsonObject existing)
+                root = existing;
+        }
+        catch { /* corrupt/unreadable → start fresh rather than fail */ }
+
+        foreach ((string key, JsonNode? value) in incoming)
+            root[key] = value?.DeepClone();
+        File.WriteAllText(hooksPath,
+            root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+
+        Console.WriteLine($"AgentSignal: writer deployed to {deployed}");
+        Console.WriteLine($"AgentSignal: 'antigravity' hooks merged into {hooksPath} (global scope ONLY — do not also add a workspace .agents/hooks.json copy; both scopes fire)");
+        Console.WriteLine("AgentSignal: red comes from the conversation-db poller; hook writes spawn it automatically (nothing to start by hand)");
+        if (root.ContainsKey("agentsignal-phase0-log"))
+            Console.WriteLine("AgentSignal: NOTE — the Phase 0 logging hooks are still installed; run adapters/antigravity/phase0/uninstall-phase0.ps1 to remove them");
         return 0;
     }
 

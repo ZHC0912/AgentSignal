@@ -22,6 +22,11 @@ internal static class Program
             if (args.Length >= 1 && string.Equals(args[0], "install", StringComparison.OrdinalIgnoreCase))
                 return Installer.Run(args.Length >= 2 ? args[1] : "claude");
 
+            // The Antigravity red-light poller daemon (spawned automatically by antigravity hook
+            // writes; can also be run by hand for diagnostics with --once / --test).
+            if (args.Length >= 1 && string.Equals(args[0], "poll", StringComparison.OrdinalIgnoreCase))
+                return AntigravityPoller.RunCommand(args[1..]);
+
             return WriteState(args);
         }
         catch (Exception ex)
@@ -52,11 +57,17 @@ internal static class Program
 
         string tool = args[0];
         string state = args[1].ToLowerInvariant();
+        bool antigravity = string.Equals(tool, AntigravityAdapter.ToolName, StringComparison.OrdinalIgnoreCase);
 
         using JsonDocument? doc = TryParse(ReadStdin());
         JsonElement root = doc?.RootElement ?? default;
 
-        string sessionId = GetString(root, "session_id") ?? "unknown";
+        // Antigravity's session key is the conversation id (= its db filename). The hook stdin
+        // payload is unverified (Phase 0 §1/§5), so resolution runs through fallbacks ending at the
+        // most-recently-written conversation db.
+        string sessionId = antigravity
+            ? AntigravityAdapter.ResolveSessionId(GetString(root, "conversation_id"), GetString(root, "session_id"))
+            : GetString(root, "session_id") ?? "unknown";
         string? eventName = GetString(root, "hook_event_name");
         string? toolName = GetString(root, "tool_name");
         string? source = GetString(root, "source");
@@ -80,7 +91,7 @@ internal static class Program
             string.Equals(eventName, "SessionStart", StringComparison.Ordinal) ||
             string.Equals(source, "resume", StringComparison.Ordinal);
         int pid = (freshStart || existing is null || existing.Pid <= 0)
-            ? ProcessHelper.FindAgentPid(tool)
+            ? (antigravity ? AntigravityAdapter.FindPid() : ProcessHelper.FindAgentPid(tool))
             : existing.Pid;
 
         // Forward the actual tool runtime so the widget can back-credit post-approval work time.
@@ -102,6 +113,11 @@ internal static class Program
         };
 
         WriteAtomic(path, session);
+
+        // Antigravity red can't come from hooks (nothing fires at an approval prompt) — it comes
+        // from the db-polling daemon. Hook writes are the daemon's keep-alive: spawn it if absent.
+        if (antigravity)
+            AntigravityAdapter.EnsurePollerRunning();
         return 0;
     }
 
@@ -150,7 +166,7 @@ internal static class Program
         catch { return null; }
     }
 
-    private static void WriteAtomic(string path, SessionState session)
+    internal static void WriteAtomic(string path, SessionState session)
     {
         string json = JsonSerializer.Serialize(session, AgentJsonContext.Default.SessionState);
         string tmp = $"{path}.{Environment.ProcessId}.tmp";

@@ -18,12 +18,22 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AgentSignal.Core\AgentSignal.Core.csproj" />
+    <!-- The Antigravity red light comes from polling the IDE's conversation SQLite (no hook fires at
+         an approval prompt — adapters/antigravity/phase0/FINDINGS.md). The poller is the writer's
+         `poll antigravity` subcommand, so one deployed binary covers hooks + poller. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <!-- Direct pin over Microsoft.Data.Sqlite's transitive SQLitePCLRaw.lib.e_sqlite3 2.1.10, whose
+         bundled native SQLite has a known vulnerability (NU1903, GHSA-2m69-gcr7-jv3q; CVE-2025-6965).
+         The fixed native build is 3.50.3 (the lib package renumbered to track SQLite's own version;
+         it stays API-compatible with the 2.1.x SQLitePCLRaw managed layer). -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Claude adapter's hook definition lives under adapters/claude and is embedded so the
-         deployed writer can self-install (AgentSignal.Writer install claude). -->
+    <!-- Each adapter's hook definition lives under adapters/<tool> and is embedded so the deployed
+         writer can self-install (AgentSignal.Writer install <tool>). -->
     <EmbeddedResource Include="..\..\adapters\claude\hooks.template.json" LogicalName="claude-hooks.json" />
+    <EmbeddedResource Include="..\..\adapters\antigravity\hooks.template.json" LogicalName="antigravity-hooks.json" />
   </ItemGroup>
 
 </Project>
