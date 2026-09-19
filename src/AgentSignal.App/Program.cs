@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
@@ -18,6 +19,8 @@ internal static class Program
     //   --timer-test         replay the §8 permission scenario through the real WorkTimer (diagnostic)
     //   --blink-test         drive a real SessionRowViewModel to prove the green-blink start/cancel/settle
     //   --reset-test         prove the manual reset (force-green files + frozen timer, quiet, fresh next run)
+    //   --label-test         prove the auto-label (folder · tool) and the per-session hide/show
+    //   --liveness-test      prove dead/ghost session files are pruned (reused pid, no pid, unknown, corrupt)
     //   --watch [seconds]    run the real reconcile loop over live files, printing the model (diagnostic)
     //   --startup <on|off|status>  toggle/inspect the real launch-on-startup entry (diagnostic)
     //   (no args)            run the always-on-top widget
@@ -44,6 +47,12 @@ internal static class Program
 
         if (args.Length >= 1 && args[0] == "--reset-test")
             return ResetTest();
+
+        if (args.Length >= 1 && args[0] == "--label-test")
+            return LabelTest();
+
+        if (args.Length >= 1 && args[0] == "--liveness-test")
+            return LivenessTest();
 
         if (args.Length >= 1 && args[0] == "--watch")
             return WatchLive(args.Length >= 2 && int.TryParse(args[1], out int s) ? s : 30);
@@ -92,12 +101,15 @@ internal static class Program
             if (tick++ % 4 == 0) // print ~1x/sec; poll 4x/sec so timers stay accurate
             {
                 string aggTimer = vm.HasTimer ? vm.TimerText : "-";
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] aggregate={vm.State,-6} timer={aggTimer,-7} sessions={vm.SessionCount}");
-                foreach (var r in vm.Sessions)
+                int hidden = vm.AllSessions.Count - vm.SessionCount;
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] aggregate={vm.State,-6} timer={aggTimer,-7} label=\"{vm.FullLabel}\" shown={vm.SessionCount} hidden={hidden}");
+                // AllSessions so hidden sessions stay visible to the diagnostic (they're still tracked).
+                foreach (var r in vm.AllSessions)
                 {
                     string mode = r.IsYellowActive ? "running" : r.IsRedActive ? "paused" : "frozen/idle";
                     string blink = r.IsGreenPulsing ? " blink=ON" : "";
-                    Console.WriteLine($"    {r.SessionId,-38} {r.State,-6} {(r.HasTimer ? r.TimerText : "-"),-7} {mode}{blink}");
+                    string vis = r.IsShown ? " " : "H";
+                    Console.WriteLine($"  {vis} {r.FullLabel,-28} {r.SessionId,-38} {r.State,-6} {(r.HasTimer ? r.TimerText : "-"),-7} {mode}{blink}");
                 }
             }
             System.Threading.Thread.Sleep(250);
@@ -151,6 +163,23 @@ internal static class Program
         };
         RenderWindow(win, Path.Combine(outDir, "settings-after.png"));
         Console.WriteLine($"live edits applied to running window: YellowColor={settings.YellowColor} Scale={settings.Scale} Opacity={settings.Opacity}");
+
+        // The real Settings window, including the live SESSION TRACKING list. Two tracked sessions,
+        // one of them hidden — exactly what the widget hands it (its AllSessions collection).
+        var tracking = new WidgetViewModel(live: false);
+        tracking.AllSessions.Add(new SessionRowViewModel("claude", "alpha")
+        {
+            State = AggregateState.Yellow, TimerText = "1:10",
+            InitialsLabel = "C · C", FullLabel = "calorie-tracker · Claude",
+        });
+        tracking.AllSessions.Add(new SessionRowViewModel("antigravity", "bravo", shown: false)
+        {
+            State = AggregateState.Green, TimerText = "0:48",
+            InitialsLabel = "M · A", FullLabel = "my-app · Antigravity",
+        });
+        var settingsWin = new SettingsWindow { DataContext = new SettingsViewModel(null, null, tracking) };
+        settingsWin.Show();
+        RenderWindow(settingsWin, Path.Combine(outDir, "settings-window.png"));
 
         var toast = new ToastWindow("AgentSignal", "Agent needs permission");
         toast.Show();
@@ -281,31 +310,40 @@ internal static class Program
         Directory.CreateDirectory(dir);
         try
         {
-            void Put(string id, string state, string evt) => File.WriteAllText(
+            // Planted sessions must be LIVE under SessionLiveness (the reset deliberately skips ghosts):
+            // pid = this test process, ts = just now (after this process started).
+            int livePid = Environment.ProcessId;
+            long plantedTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            void Put(string id, string state, string evt, int pid, long ts) => File.WriteAllText(
                 Path.Combine(dir, $"claude__{id}.json"),
                 JsonSerializer.Serialize(new SessionState
                 {
-                    Tool = "claude", SessionId = id, State = state, Event = evt, Pid = 4242, Ts = 1_700_000_000,
+                    Tool = "claude", SessionId = id, State = state, Event = evt, Pid = pid, Ts = ts,
                 }, AgentJsonContext.Default.SessionState));
 
-            Put("stuckyellow", "yellow", "PreToolUse");     // the Esc-mid-tool gap this feature exists for
-            Put("waitingred", "red", "PermissionRequest");
-            Put("alreadygreen", "green", "Stop");
+            Put("stuckyellow", "yellow", "PreToolUse", livePid, plantedTs);  // the Esc-mid-tool gap this feature exists for
+            Put("waitingred", "red", "PermissionRequest", livePid, plantedTs);
+            Put("alreadygreen", "green", "Stop", livePid, plantedTs);
+            // A ghost: a pid that isn't running, last event in 2023. Rewriting its ts=now could revive
+            // it (a recycled pid would then look older than the "last event"), so reset leaves it alone.
+            Put("ghostyellow", "yellow", "PreToolUse", FindNonRunningPid(), 1_700_000_000);
 
             var now = new DateTime(2026, 7, 4, 12, 0, 0, DateTimeKind.Utc);
             int n = SessionResetService.ForceGreen(dir, now);
-            Check("rewrites exactly the two non-green files", n == 2);
+            Check("rewrites exactly the two live non-green files", n == 2);
 
             SessionState Load(string id) => JsonSerializer.Deserialize(
                 File.ReadAllText(Path.Combine(dir, $"claude__{id}.json")), AgentJsonContext.Default.SessionState)!;
 
-            SessionState y = Load("stuckyellow"), r = Load("waitingred"), g = Load("alreadygreen");
+            SessionState y = Load("stuckyellow"), r = Load("waitingred"), g = Load("alreadygreen"), ghost = Load("ghostyellow");
             Check("stuck yellow → green, event=ManualReset, ts=now, pid preserved",
                 y.State == "green" && y.Event == SessionResetService.EventName &&
-                y.Ts == (long)(now - DateTime.UnixEpoch).TotalSeconds && y.Pid == 4242);
+                y.Ts == (long)(now - DateTime.UnixEpoch).TotalSeconds && y.Pid == livePid);
             Check("red also cleared to green", r.State == "green" && r.Event == SessionResetService.EventName);
-            Check("already-green file left untouched (still event=Stop, old ts)",
-                g.Event == "Stop" && g.Ts == 1_700_000_000);
+            Check("already-green file left untouched (still event=Stop, original ts)",
+                g.Event == "Stop" && g.Ts == plantedTs);
+            Check("a GHOST is not touched (still yellow, ts not refreshed — can't be revived)",
+                ghost.State == "yellow" && ghost.Ts == 1_700_000_000);
         }
         finally
         {
@@ -350,14 +388,256 @@ internal static class Program
         return ok ? 0 : 1;
     }
 
+    // Proves the auto-label and the per-session hide, headlessly. LABEL half: the pure formatting in
+    // AgentSignal.Core (folder from cwd, tool display, truncation, the no-cwd fallback). HIDE half:
+    // the REAL WidgetViewModel polling a TEMP sessions dir — hiding drops the pill but keeps the
+    // session tracked (timer still running), the hide is per EXACT session (a new id in the same
+    // folder shows normally), it survives later hook events and a relaunch, and the key is pruned
+    // once the session ends. Exit 0 = ALL PASS.
+    private static int LabelTest()
+    {
+        bool ok = true;
+        void Check(string label, bool pass)
+        {
+            ok &= pass;
+            Console.WriteLine($"  {(pass ? "PASS" : "FAIL")}  {label}");
+        }
+
+        Console.WriteLine("auto-label + per-session hide test");
+        Console.WriteLine(" LABEL");
+        Check("folder from a Windows cwd", SessionLabel.FolderName(@"C:\Users\me\calorie-tracker") == "calorie-tracker");
+        Check("folder from a POSIX cwd with a trailing slash", SessionLabel.FolderName("/home/me/my-app/") == "my-app");
+        Check("full label = folder · Tool", SessionLabel.Full("claude", @"C:\src\calorie-tracker") == "calorie-tracker · Claude");
+        Check("antigravity gets its own name", SessionLabel.Full("antigravity", "/w/my-app") == "my-app · Antigravity");
+        Check("resting label = initials only",
+            SessionLabel.Initials("claude", @"C:\src\AgentSignal") == "A · C" &&
+            SessionLabel.Initials("antigravity", @"C:\src\calorie-tracker") == "C · A");
+        Check("initials skip leading punctuation and accept digits",
+            SessionLabel.Initials("claude", "/w/.config") == "C · C" &&
+            SessionLabel.Initials("claude", "/w/2048-game") == "2 · C");
+        Check("no cwd → the tool alone (full), its initial alone (resting)",
+            SessionLabel.Full("claude", null) == "Claude" && SessionLabel.Initials("claude", null) == "C");
+
+        Console.WriteLine(" HIDE (real WidgetViewModel over a temp sessions dir)");
+        string dir = Path.Combine(Path.GetTempPath(), "agentsignal-label-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        List<string> savedHidden = ConfigService.Instance.Current.HiddenSessions;
+        try
+        {
+            // pid = this process, so the liveness check keeps every planted session "live".
+            void Put(string id, string state, string evt, string cwd) => File.WriteAllText(
+                Path.Combine(dir, $"claude__{id}.json"),
+                JsonSerializer.Serialize(new SessionState
+                {
+                    Tool = "claude", SessionId = id, State = state, Event = evt, Cwd = cwd,
+                    Pid = Environment.ProcessId, Ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                }, AgentJsonContext.Default.SessionState));
+
+            const string TrackerDir = @"C:\src\calorie-tracker";
+            const string AppDir = @"C:\src\my-app";
+            Put("alpha", "yellow", "UserPromptSubmit", TrackerDir);
+            Put("bravo", "red", "PermissionRequest", AppDir);
+
+            ConfigService.Instance.Current.HiddenSessions = new List<string>(); // nothing hidden yet
+            var vm = new WidgetViewModel(live: false, sessionsDir: dir);
+            vm.PollOnce();
+            Check("two sessions: both visible, red wins the aggregate",
+                vm.SessionCount == 2 && vm.AllSessions.Count == 2 && vm.Sessions.Count == 2 &&
+                vm.State == AggregateState.Red);
+            Check("each row is labelled folder · tool (initials at rest)",
+                Row(vm, "alpha").FullLabel == "calorie-tracker · Claude" &&
+                Row(vm, "alpha").LabelText == "C · C" &&
+                Row(vm, "bravo").FullLabel == "my-app · Claude" &&
+                Row(vm, "bravo").LabelText == "M · C");
+            Row(vm, "alpha").IsLabelExpanded = true;
+            Check("hovering ONE row expands only that row's label",
+                Row(vm, "alpha").LabelText == "calorie-tracker · Claude" &&
+                Row(vm, "bravo").LabelText == "M · C");
+            Row(vm, "alpha").IsLabelExpanded = false;
+
+            // Right-click → Hide on the red one (the settings checkbox does exactly the same thing).
+            Row(vm, "bravo").HideCommand.Execute(null);
+            Check("hide takes effect immediately (1 pill shown, 2 still tracked)",
+                vm.Sessions.Count == 1 && vm.Sessions[0].SessionId == "alpha" && vm.AllSessions.Count == 2);
+            vm.PollOnce();
+            Check("the hidden red session no longer drives the colour (aggregate = yellow)",
+                vm.State == AggregateState.Yellow && vm.SessionCount == 1);
+            Check("single pill shows the remaining session's label: initials at rest",
+                !vm.IsExpanded && vm.IsLabelShown &&
+                vm.InitialsLabel == "C · C" && vm.FullLabel == "calorie-tracker · Claude" &&
+                vm.LabelText == "C · C");
+            vm.IsLabelExpanded = true; // what the view sets while the pointer is over the pill
+            Check("hover expands the label text in place to the full label",
+                vm.LabelText == "calorie-tracker · Claude");
+            vm.IsLabelExpanded = false;
+            Check("mouse-out collapses it back to the initials", vm.LabelText == "C · C");
+
+            // Tracking continues underneath: a hidden session keeps observing state AND running its timer.
+            Put("bravo", "yellow", "UserPromptSubmit", AppDir);
+            vm.PollOnce();
+            string t0 = Row(vm, "bravo").TimerText;
+            Check("a later hook event for the same session id stays hidden",
+                Row(vm, "bravo").State == AggregateState.Yellow && !Row(vm, "bravo").IsShown && vm.Sessions.Count == 1);
+            System.Threading.Thread.Sleep(1200);
+            vm.PollOnce();
+            Check($"hidden session keeps tracking — its timer advanced ({(t0.Length == 0 ? "-" : t0)} → {Row(vm, "bravo").TimerText})",
+                Row(vm, "bravo").TimerText != t0 && Row(vm, "bravo").TimerText.Length > 0);
+
+            // Hide is per EXACT session, not per folder.
+            Put("charlie", "yellow", "UserPromptSubmit", AppDir); // same folder as the hidden bravo
+            vm.PollOnce();
+            Check("a NEW session in the SAME folder appears normally",
+                Row(vm, "charlie").IsShown && vm.Sessions.Count == 2 && vm.IsExpanded);
+
+            // Un-hiding (the Settings checkbox) brings the pill straight back.
+            Row(vm, "bravo").IsShown = true;
+            Check("re-showing restores the pill immediately", vm.Sessions.Count == 3);
+            Row(vm, "bravo").IsShown = false;
+
+            // A hide lasts only as long as its session.
+            Check("hidden key is held while the session lives", vm.HiddenKeys.Contains("claude__bravo"));
+            File.Delete(Path.Combine(dir, "claude__bravo.json")); // session ended
+            vm.PollOnce();
+            Check("session ended → the hidden key is pruned",
+                !vm.HiddenKeys.Contains("claude__bravo") && vm.AllSessions.Count == 2);
+
+            // Relaunch: a hidden key in config is honoured for a session that is still live.
+            ConfigService.Instance.Current.HiddenSessions = new List<string> { "claude__alpha" };
+            var relaunched = new WidgetViewModel(live: false, sessionsDir: dir);
+            relaunched.PollOnce();
+            Check("after a relaunch a hidden session is still hidden (but still tracked)",
+                relaunched.AllSessions.Count == 2 && relaunched.Sessions.Count == 1 &&
+                relaunched.Sessions[0].SessionId == "charlie" && !Row(relaunched, "alpha").IsShown);
+        }
+        finally
+        {
+            ConfigService.Instance.Current.HiddenSessions = savedHidden; // never disturb the real config
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+
+        Console.WriteLine(ok ? "ALL PASS" : "FAILURES above");
+        return ok ? 0 : 1;
+    }
+
+    private static SessionRowViewModel Row(WidgetViewModel vm, string sessionId)
+    {
+        foreach (SessionRowViewModel r in vm.AllSessions)
+            if (r.SessionId == sessionId) return r;
+        throw new InvalidOperationException($"no tracked row for session '{sessionId}'");
+    }
+
+    // Proves ghost sessions are pruned. Plants every ghost shape seen in the wild into a TEMP sessions
+    // dir, runs the REAL SessionReader over it (exactly what the widget does at startup and on every
+    // 250ms poll), then checks both what would render as a pill AND what is left on disk:
+    //   live      — this process, fresh ts                      → shown, kept
+    //   reused    — SAME live pid, but ts from months ago       → the pid now belongs to a process that
+    //               started long after the session's last event, so it cannot be that session's agent
+    //   nopid     — pid 0, months old                           → nothing to probe; no agent process
+    //               that old is running, so it's dead
+    //   deadpid   — a pid that isn't running                    → dead (was hidden before, but its
+    //               file was never deleted, so the dir grew for months)
+    //   unknown   — claude__unknown.json (no session_id ever)   → never a real session; always removed
+    //   corrupt   — unparseable JSON, old mtime                 → garbage, removed
+    // Exit 0 = ALL PASS.
+    private static int LivenessTest()
+    {
+        bool ok = true;
+        void Check(string label, bool pass)
+        {
+            ok &= pass;
+            Console.WriteLine($"  {(pass ? "PASS" : "FAIL")}  {label}");
+        }
+
+        Console.WriteLine("ghost-session pruning test (temp sessions dir, real SessionReader)");
+        string dir = Path.Combine(Path.GetTempPath(), "agentsignal-liveness-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            long monthsAgo = new DateTimeOffset(2026, 7, 17, 12, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+            int self = Environment.ProcessId;
+            int dead = FindNonRunningPid();
+
+            void Put(string id, int pid, long ts) => File.WriteAllText(
+                Path.Combine(dir, $"claude__{id}.json"),
+                JsonSerializer.Serialize(new SessionState
+                {
+                    Tool = "claude", SessionId = id, State = "yellow", Event = "PreToolUse",
+                    Cwd = @"C:\src\" + id, Pid = pid, Ts = ts,
+                }, AgentJsonContext.Default.SessionState));
+
+            Put("live", self, now);
+            Put("reused", self, monthsAgo);   // same pid as "live" — a textbook PID reuse
+            Put("nopid", 0, monthsAgo);
+            Put("deadpid", dead, monthsAgo);
+            Put("unknown", self, now);        // even with a live pid + fresh ts, "unknown" isn't a session
+            string corrupt = Path.Combine(dir, "claude__corrupt.json");
+            File.WriteAllText(corrupt, "{ \"tool\": \"claude\", \"sessionId\": ");
+            File.SetLastWriteTimeUtc(corrupt, DateTime.UtcNow.AddMinutes(-10));
+
+            Console.WriteLine($"  planted: live(pid {self}), reused(pid {self}, ts 2026-07-17), nopid, deadpid(pid {dead}), unknown, corrupt");
+
+            var shown = new SessionReader(dir).ReadLive().Select(s => s.SessionId).OrderBy(x => x).ToList();
+            var onDisk = Directory.GetFiles(dir, "*.json")
+                .Select(f => Path.GetFileNameWithoutExtension(f)["claude__".Length..]).OrderBy(x => x).ToList();
+            Console.WriteLine($"  rendered as pills : [{string.Join(", ", shown)}]");
+            Console.WriteLine($"  left on disk      : [{string.Join(", ", onDisk)}]");
+
+            Check("the live session is shown", shown.Contains("live"));
+            Check("a months-old session whose pid was REUSED is not shown", !shown.Contains("reused"));
+            Check("a months-old session with NO pid is not shown", !shown.Contains("nopid"));
+            Check("claude__unknown.json is not shown", !shown.Contains("unknown"));
+            Check("exactly one pill renders", shown.Count == 1);
+            Check("every ghost file is DELETED from disk (only 'live' remains)",
+                onDisk.Count == 1 && onDisk[0] == "live");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+
+        Console.WriteLine(ok ? "ALL PASS" : "FAILURES above");
+        return ok ? 0 : 1;
+    }
+
+    private static int FindNonRunningPid()
+    {
+        for (int pid = 1_000_000; pid > 4; pid -= 7919)
+            if (!ProcessHelper.IsAlive(pid))
+                return pid;
+        return 999_999;
+    }
+
+    // READ-ONLY: lists every session file with the liveness verdict the widget would reach, and why.
+    // Uses SessionReader.Inspect(), which never deletes — a diagnostic must not modify the sessions
+    // dir (ReadLive/SweepDead remove ghosts; the running widget does that on its own poll).
     private static int Dump()
     {
-        var sessions = new SessionReader().ReadLive();
-        Console.WriteLine($"sessions dir : {AgentPaths.SessionsDir}");
-        Console.WriteLine($"live sessions: {sessions.Count}");
-        foreach (var s in sessions)
-            Console.WriteLine($"  {s.Tool}__{s.SessionId}  state={s.State,-6} pid={s.Pid} alive={ProcessHelper.IsAlive(s.Pid)} event={s.Event} durationMs={s.DurationMs}");
-        Console.WriteLine($"aggregate    : {WidgetViewModel.Aggregate(sessions)}");
+        var reader = new SessionReader();
+        var files = reader.Inspect().ToList();
+        var live = files.Where(f => f.State is not null && f.Verdict.Alive).Select(f => f.State!).ToList();
+        int onDisk = Directory.Exists(AgentPaths.SessionsDir)
+            ? Directory.GetFiles(AgentPaths.SessionsDir, "*.json").Length : 0;
+
+        Console.WriteLine($"sessions dir : {AgentPaths.SessionsDir}  (read-only — nothing is deleted)");
+        Console.WriteLine($"files on disk: {onDisk}   live: {live.Count}   ghosts: {files.Count - live.Count}");
+        foreach ((string file, SessionState? s, SessionLiveness.Verdict v) in files)
+        {
+            string verdict = v.Alive ? "LIVE " : "GHOST";
+            if (s is null)
+            {
+                Console.WriteLine($"  {verdict} {Path.GetFileName(file)}");
+            }
+            else
+            {
+                Console.WriteLine($"  {verdict} {s.Tool}__{s.SessionId}  state={s.State,-6} pid={s.Pid} event={s.Event} ts={DateTime.UnixEpoch.AddSeconds(s.Ts):yyyy-MM-dd HH:mm}Z");
+                Console.WriteLine($"        label=[{SessionLabel.Full(s.Tool, s.Cwd)}]  cwd={s.Cwd ?? "(none)"}");
+            }
+            Console.WriteLine($"        why: {v.Reason}");
+        }
+        if (onDisk > files.Count)
+            Console.WriteLine($"  ({onDisk - files.Count} unparseable file(s) younger than the corrupt grace period not listed — likely a write in flight)");
+        Console.WriteLine($"aggregate    : {WidgetViewModel.Aggregate(live)}");
         return 0;
     }
 

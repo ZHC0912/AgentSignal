@@ -22,6 +22,14 @@ public sealed class SessionState
     /// <summary>The tool involved when relevant (e.g. "Bash"). Optional; for a tooltip.</summary>
     public string? ToolName { get; set; }
 
+    /// <summary>
+    /// The session's working directory, captured from the hook payload's <c>cwd</c> at whichever
+    /// event first reports it (and preserved on later writes). The widget derives each pill's label
+    /// from it — the folder name plus the tool, e.g. "calorie-tracker · Claude". Null when the
+    /// agent never reported one, in which case the label falls back to the tool alone.
+    /// </summary>
+    public string? Cwd { get; set; }
+
     /// <summary>Agent process id, captured at session start (and re-captured on resume). 0 if unknown.</summary>
     public int Pid { get; set; }
 

@@ -27,6 +27,15 @@ public sealed class AppConfig
     // Widget interaction state that should survive a relaunch.
     public bool TimerCollapsed { get; set; }       // timer hidden behind its chevron (visual only; timer keeps counting)
 
+    /// <summary>
+    /// Sessions the user has hidden, keyed exactly as the state files are ("&lt;tool&gt;__&lt;sessionId&gt;").
+    /// A hidden session keeps being tracked (its timer runs, it stays listed in Settings → Session
+    /// Tracking) but shows no pill and is left out of the aggregate colour and alerts. The key is the
+    /// EXACT session, so a brand-new session in the same folder appears normally. Keys are pruned as
+    /// soon as their session ends, so the set survives a relaunch but never accumulates.
+    /// </summary>
+    public List<string> HiddenSessions { get; set; } = new();
+
     // Visual feedback.
     public double BlinkOnGreenSeconds { get; set; } = 2.0; // pulse the green dot this long on entering green (0 = off, 0–5s)
 

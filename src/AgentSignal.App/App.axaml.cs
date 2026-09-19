@@ -31,6 +31,11 @@ public partial class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            // Startup sweep: delete every session file whose agent is gone BEFORE the widget first
+            // renders, so ghosts left by previous boots never appear as pills (the 250ms poll keeps
+            // sweeping after that).
+            new SessionReader().SweepDead();
+
             _alerts = new AlertService(new SystemSoundPlayer(), new ToastNotifier());
             _widgetVm = new WidgetViewModel(_alerts);
             var widget = new WidgetWindow { DataContext = _widgetVm };
@@ -57,7 +62,9 @@ public partial class App : Application
             _settings.Activate();
             return;
         }
-        _settings = new SettingsWindow { DataContext = new SettingsViewModel(_alerts, ResetAllSessions) };
+        // The widget VM is passed in so Settings → Session Tracking can list the live sessions and
+        // drive their show/hide directly off the same models the pills use.
+        _settings = new SettingsWindow { DataContext = new SettingsViewModel(_alerts, ResetAllSessions, _widgetVm) };
         _settings.Closed += (_, _) =>
         {
             _settings = null;

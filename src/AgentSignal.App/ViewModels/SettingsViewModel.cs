@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using AgentSignal.App.Models;
 using AgentSignal.App.Services;
 using Avalonia.Media;
@@ -18,6 +19,18 @@ public partial class SettingsViewModel : ObservableObject
     private readonly Action? _resetAll;
     private readonly bool _loading;
 
+    /// <summary>
+    /// SESSION TRACKING: every currently-tracked session, hidden ones included, bound straight to the
+    /// widget's live collection — so rows appear and disappear here as sessions start and end, with no
+    /// extra polling. Each item's <c>IsShown</c> is the show/hide checkbox: unchecking is exactly the
+    /// same action as right-click → Hide on the pill, and re-checking is the way to bring a hidden pill
+    /// back. Empty (never null) when there is no widget, e.g. in the headless settings demo.
+    /// </summary>
+    public ObservableCollection<SessionRowViewModel> TrackedSessions { get; }
+
+    /// <summary>Drives the "no sessions" placeholder, live.</summary>
+    public bool HasTrackedSessions => TrackedSessions.Count > 0;
+
     [ObservableProperty][NotifyPropertyChangedFor(nameof(GreenSwatch))] private string _greenColor = "";
     [ObservableProperty][NotifyPropertyChangedFor(nameof(YellowSwatch))] private string _yellowColor = "";
     [ObservableProperty][NotifyPropertyChangedFor(nameof(RedSwatch))] private string _redColor = "";
@@ -37,10 +50,12 @@ public partial class SettingsViewModel : ObservableObject
     public IBrush YellowSwatch => Swatch(YellowColor);
     public IBrush RedSwatch => Swatch(RedColor);
 
-    public SettingsViewModel(AlertService? alerts = null, Action? resetAll = null)
+    public SettingsViewModel(AlertService? alerts = null, Action? resetAll = null, WidgetViewModel? widget = null)
     {
         _alerts = alerts;
         _resetAll = resetAll;
+        TrackedSessions = widget?.AllSessions ?? new ObservableCollection<SessionRowViewModel>();
+        TrackedSessions.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasTrackedSessions));
 
         _loading = true;
         AppConfig c = _cfg.Current;

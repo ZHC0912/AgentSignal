@@ -42,6 +42,26 @@
       <Setter Property="Padding" Value="0" />
     </Style>
 
+    <!-- Label chip: the session's folder + agent. At REST it shows only the initials ("A · C"); while
+         the pointer is over the pill it expands IN PLACE to the full "AgentSignal · Claude" (this
+         replaces the old static tooltip). Content-sized, so it grows RIGHTWARD from a fixed left edge.
+         It lives in its own docked band and the dots/timer/gear group below it is laid out
+         independently (that group is left-aligned and self-sized), so no label width — resting,
+         expanded or absurdly long — can move them by a pixel. Height is identical in both states
+         (same font + padding), so the band never changes height either. -->
+    <Style Selector="Border.pill.label">
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="Padding" Value="9,2" />
+      <Setter Property="MinHeight" Value="20" />
+    </Style>
+    <Style Selector="TextBlock.labeltext">
+      <Setter Property="Foreground" Value="#C8FFFFFF" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontFamily" Value="Segoe UI, Inter" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
     <!-- Flat, click-consuming button used for the timer, its chevron and the gear. Being a Button, it
          captures its own pointer press, so the window's dots-click (reveal gear) never fires for it —
          each control affects only itself. All chrome is stripped so the pill Border owns the look. -->
@@ -88,14 +108,41 @@
     </Style>
   </UserControl.Styles>
 
-  <!-- The dots block plus an attach strip (timer/chevron + gear). The strip docks to whichever edge the
-       VM chose (AttachDock) — below/above the dots when horizontal, right/left when vertical — so the
-       pills always open toward the screen. The dots block fills the remaining space. -->
-  <DockPanel LastChildFill="True" HorizontalAlignment="Left" VerticalAlignment="Top">
+  <!-- OUTER layout: the label band plus the widget proper. The label is docked on the edge OPPOSITE
+       the strip (LabelDock: above the dots normally, below when the strip flips above them near the
+       bottom edge, always above a vertical column). The widget proper (strip + dots) is the fill child
+       and is LEFT/TOP-aligned and self-sized — that is what makes the label unable to move it: however
+       wide the label gets when it expands on hover, the inner group keeps its own desired width at its
+       own origin, so the dots, timer and gear are pixel-stable.
+       Background=Transparent makes the whole widget rect (gaps included) register the hover, so the
+       label doesn't flicker as the pointer crosses between chips. -->
+  <DockPanel x:Name="PillRoot" LastChildFill="True" Background="Transparent"
+             HorizontalAlignment="Left" VerticalAlignment="Top"
+             PointerEntered="OnLabelHoverChanged" PointerExited="OnLabelHoverChanged">
+
+    <!-- AUTO LABEL for the single (collapsed) pill: which project this session is working in, plus the
+         agent — initials at rest, full label while hovered. LEFT-anchored (plus LabelMargin's inward
+         nudge, and an offset past the strip when the strip docks left) so expansion grows rightward
+         from a fixed left edge. Hidden while expanded: each session row then carries its own label. -->
+    <Border Classes="pill label" DockPanel.Dock="{Binding LabelDock}" Margin="{Binding LabelMargin}"
+            HorizontalAlignment="Left" VerticalAlignment="Center"
+            IsVisible="{Binding IsLabelShown}">
+      <!-- Right-click anywhere on the pill (label or dots) offers Hide for THIS session. -->
+      <Border.ContextMenu>
+        <ContextMenu>
+          <MenuItem Header="Hide this session" Command="{Binding HideDrivingCommand}" />
+        </ContextMenu>
+      </Border.ContextMenu>
+      <TextBlock Classes="labeltext" Text="{Binding LabelText}" />
+    </Border>
+
+    <!-- INNER group: the widget proper. Self-sized and origin-anchored (Left/Top) so the label band
+         above it can never stretch or shift it. -->
+    <DockPanel LastChildFill="True" HorizontalAlignment="Left" VerticalAlignment="Top">
 
     <!-- Attach strip. It stretches across the dots on its cross axis, so the timer pins to one end and
          the gear to the other (left/right when horizontal; top/bottom when vertical). -->
-    <Grid DockPanel.Dock="{Binding AttachDock}" Margin="{Binding AttachMargin}">
+    <Grid x:Name="AttachStrip" DockPanel.Dock="{Binding AttachDock}" Margin="{Binding AttachMargin}">
       <!-- Timer/chevron SLOT: a FIXED-size, transparent reservation. The dots pill is the anchor; only
            the element INSIDE this slot ever changes (timer chip ⇄ chevron, varying text width, or fully
            hidden). Because the slot's footprint is constant, the attach strip never resizes, so the dots
@@ -147,6 +194,13 @@
     <Panel HorizontalAlignment="Left" VerticalAlignment="Top">
       <Border Classes="pill dots" IsVisible="{Binding !IsExpanded}"
               HorizontalAlignment="Left" VerticalAlignment="Top">
+        <!-- Right-click → Hide removes this session's pill from view while it keeps being tracked
+             underneath; Settings → Session Tracking brings it back. -->
+        <Border.ContextMenu>
+          <ContextMenu>
+            <MenuItem Header="Hide this session" Command="{Binding HideDrivingCommand}" />
+          </ContextMenu>
+        </Border.ContextMenu>
         <views:DotsView DataContext="{Binding}" />
       </Border>
 
@@ -173,9 +227,38 @@
                    aligned side-by-side because the row anchors Top and the slot hangs below).
                    Slot height 22 = the chip's MinHeight; margin 3 = the single pill's dots↔strip
                    gap (AttachMargin). -->
-              <StackPanel Orientation="Vertical" Spacing="0"
-                          HorizontalAlignment="Center" VerticalAlignment="Top">
-                <Border Classes="pill dots" HorizontalAlignment="Center" VerticalAlignment="Center">
+              <!-- One session row. Everything is LEFT-anchored and the dots+band group is its own
+                   self-sized inner stack, so this row's label — resting initials or the full label it
+                   expands to on hover — cannot move this row's dots/timer/gear, and cannot re-centre
+                   any OTHER row either (rows used to be centre-aligned, which made one wide label
+                   shift every row's dots). Transparent background so the whole row registers the
+                   hover without flicker between chips. -->
+              <StackPanel Orientation="Vertical" Spacing="0" Background="Transparent"
+                          HorizontalAlignment="Left" VerticalAlignment="Top"
+                          PointerEntered="OnLabelHoverChanged" PointerExited="OnLabelHoverChanged">
+                <!-- AUTO LABEL for this session, above its own dots (same spot in both orientations,
+                     so rows/columns stay aligned): initials at rest, the full label while this row is
+                     hovered, expanding rightward from a fixed left edge. Right-click → Hide hides
+                     THIS session only. -->
+                <Border Classes="pill label" Margin="8,0,0,3"
+                        HorizontalAlignment="Left" VerticalAlignment="Center"
+                        IsVisible="{Binding HasLabel}">
+                  <Border.ContextMenu>
+                    <ContextMenu>
+                      <MenuItem Header="Hide this session" Command="{Binding HideCommand}" />
+                    </ContextMenu>
+                  </Border.ContextMenu>
+                  <TextBlock Classes="labeltext" Text="{Binding LabelText}" />
+                </Border>
+                <!-- Inner group: dots + band, self-sized and left-anchored (the band's right-pinned
+                     gear therefore lines up with the dots pill's right edge, never the label's). -->
+                <StackPanel Orientation="Vertical" Spacing="0" HorizontalAlignment="Left">
+                <Border Classes="pill dots" HorizontalAlignment="Left" VerticalAlignment="Center">
+                  <Border.ContextMenu>
+                    <ContextMenu>
+                      <MenuItem Header="Hide this session" Command="{Binding HideCommand}" />
+                    </ContextMenu>
+                  </Border.ContextMenu>
                   <views:DotsView />
                 </Border>
                 <!-- Chip pins LEFT under horizontal dots — matching the single pill's left-pinned
@@ -221,6 +304,7 @@
                     <Button Classes="flat glyph" Content="&#x2699;" ToolTip.Tip="Settings" Click="OnGearClick" />
                   </Border>
                 </Panel>
+                </StackPanel>
               </StackPanel>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
@@ -235,5 +319,6 @@
         </Border>
       </StackPanel>
     </Panel>
+    </DockPanel>
   </DockPanel>
 </UserControl>

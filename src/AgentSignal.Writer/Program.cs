@@ -65,9 +65,22 @@ internal static class Program
         // Antigravity's session key is the conversation id (= its db filename). The hook stdin
         // payload is unverified (Phase 0 §1/§5), so resolution runs through fallbacks ending at the
         // most-recently-written conversation db.
-        string sessionId = antigravity
+        string? sessionId = antigravity
             ? AntigravityAdapter.ResolveSessionId(GetString(root, "conversation_id"), GetString(root, "session_id"))
-            : GetString(root, "session_id") ?? "unknown";
+            : GetString(root, "session_id");
+
+        // No session id = nothing to key the file on. This used to fall back to "unknown", which
+        // merged every such event into ONE claude__unknown.json that no SessionEnd could ever target
+        // (the real session's SessionEnd carries its real id), so it lingered as a ghost pill. Real
+        // Claude hooks always send session_id — the fallback only ever fired for a payload that
+        // wasn't parseable JSON (a manual run, a malformed test payload, or stdin cut off by the
+        // read deadline). Dropping one such event is harmless: the session's next hook, carrying its
+        // real id, writes the right file.
+        if (string.IsNullOrWhiteSpace(sessionId) || sessionId == SessionLiveness.UnknownSessionId)
+        {
+            DebugLog("writer-error.log", $"{tool} {state}: no session_id in the hook payload — nothing written");
+            return 0;
+        }
         string? eventName = GetString(root, "hook_event_name");
         string? toolName = GetString(root, "tool_name");
         string? source = GetString(root, "source");
@@ -91,8 +104,15 @@ internal static class Program
             string.Equals(eventName, "SessionStart", StringComparison.Ordinal) ||
             string.Equals(source, "resume", StringComparison.Ordinal);
         int pid = (freshStart || existing is null || existing.Pid <= 0)
-            ? (antigravity ? AntigravityAdapter.FindPid() : ProcessHelper.FindAgentPid(tool))
+            ? (antigravity ? AntigravityAdapter.FindPid() : FindAgentPid(tool))
             : existing.Pid;
+
+        // The session's working directory drives the pill label (folder · tool). Claude sends it on
+        // every hook as "cwd"; other adapters may not, so fall back to what we already captured and
+        // finally to the hook process's own working directory (hooks run inside the project).
+        string? cwd = GetString(root, "cwd")
+                      ?? existing?.Cwd
+                      ?? TryCurrentDirectory();
 
         // Forward the actual tool runtime so the widget can back-credit post-approval work time.
         long? durationMs = null;
@@ -107,6 +127,7 @@ internal static class Program
             State = state,
             Event = eventName,
             ToolName = toolName,
+            Cwd = cwd,
             Pid = pid,
             Ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             DurationMs = durationMs,
@@ -119,6 +140,41 @@ internal static class Program
         if (antigravity)
             AntigravityAdapter.EnsurePollerRunning();
         return 0;
+    }
+
+    /// <summary>
+    /// The agent process for liveness. A native Claude install runs as claude.exe, but an npm install
+    /// runs the CLI under node — whose exe name never contains "claude", so the walk found nothing and
+    /// the file was written with pid 0. Fall back to the nearest node ancestor (the process that
+    /// spawned this hook), so the session still gets a real, checkable pid.
+    /// </summary>
+    private static int FindAgentPid(string tool)
+    {
+        int pid = ProcessHelper.FindAgentPid(tool);
+        if (pid == 0 && string.Equals(tool, "claude", StringComparison.OrdinalIgnoreCase))
+            pid = ProcessHelper.FindAgentPid("node");
+        return pid;
+    }
+
+    private static void DebugLog(string file, string line)
+    {
+        if (Environment.GetEnvironmentVariable("AGENTSIGNAL_DEBUG") != "1") return;
+        try
+        {
+            AgentPaths.EnsureRoot();
+            File.AppendAllText(Path.Combine(AgentPaths.Root, file), $"{DateTimeOffset.UtcNow:o} {line}\n");
+        }
+        catch { /* debug only */ }
+    }
+
+    private static string? TryCurrentDirectory()
+    {
+        try
+        {
+            string d = Directory.GetCurrentDirectory();
+            return string.IsNullOrWhiteSpace(d) ? null : d;
+        }
+        catch { return null; }
     }
 
     private static string ReadStdin()

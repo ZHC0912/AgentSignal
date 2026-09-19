@@ -1,6 +1,7 @@
 using AgentSignal.App.Services;
 using AgentSignal.Core;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 
 namespace AgentSignal.App.ViewModels;
 
@@ -13,9 +14,29 @@ public sealed partial class SessionRowViewModel : DotsViewModel
 {
     private readonly WorkTimer _timer = new();
 
+    /// <summary>Raised when the user shows/hides this session (right-click → Hide, or the Settings
+    /// checkbox). <see cref="WidgetViewModel"/> subscribes to persist the hidden set and re-sync the
+    /// visible pills immediately.</summary>
+    private readonly Action<SessionRowViewModel>? _onShownChanged;
+
     public string Key { get; }
     public string Tool { get; }
     public string SessionId { get; }
+
+    /// <summary>
+    /// Whether this session's pill is displayed. False = hidden: the row keeps being observed (its
+    /// timer runs, it stays listed in Settings → Session Tracking) but it renders no pill and is left
+    /// out of the aggregate colour, the driving timer and alerts. Per EXACT session — a new session
+    /// in the same folder gets its own key and shows normally.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isShown = true;
+
+    partial void OnIsShownChanged(bool value) => _onShownChanged?.Invoke(this);
+
+    /// <summary>Right-click → "Hide" on this session's pill.</summary>
+    [RelayCommand]
+    private void Hide() => IsShown = false;
 
     /// <summary>Mirror of the widget's ONE persisted collapse preference (there is no per-row state):
     /// <see cref="WidgetViewModel"/> seeds it at row creation and pushes changes to every row, so the
@@ -45,11 +66,19 @@ public sealed partial class SessionRowViewModel : DotsViewModel
     /// timer-less gear-less rows stay snug (the dynamic tight spacing is unchanged).</summary>
     public bool IsRowBandShown => HasTimer || ShowsGear;
 
-    public SessionRowViewModel(string tool, string sessionId)
+    public SessionRowViewModel(string tool, string sessionId,
+                               Action<SessionRowViewModel>? onShownChanged = null, bool shown = true)
     {
         Tool = tool;
         SessionId = sessionId;
         Key = tool + "__" + sessionId;
+        // Seed the backing field (not the property) so restoring a persisted "hidden" at construction
+        // doesn't re-enter the widget's persist/re-sync callback before the row is even in the list.
+        _isShown = shown;
+        _onShownChanged = onShownChanged;
+        // Seed the label from the key alone so a row is never briefly unlabelled; Observe refines it
+        // with the real cwd on the very next line anyway.
+        SetLabel(tool, null);
 
         // HasTimer feeds both derived flags; it changes with TimerText (same relay the widget VM uses
         // for its strip flags).
@@ -70,6 +99,7 @@ public sealed partial class SessionRowViewModel : DotsViewModel
     public void Observe(SessionState s, DateTime nowUtc)
     {
         _timer.Observe(s, nowUtc);
+        SetLabel(s.Tool, s.Cwd); // cwd can arrive on a later event than the one that created the file
         // No celebration blink for a green that isn't a real finish: a manually reset session
         // (event=ManualReset) was cleared by the user, not completed.
         QuietGreen = s.Event == SessionResetService.EventName;

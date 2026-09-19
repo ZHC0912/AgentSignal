@@ -1,4 +1,5 @@
 using AgentSignal.App.Services;
+using AgentSignal.Core;
 using Avalonia.Layout;
 using CommunityToolkit.Mvvm.ComponentModel;
 
@@ -26,6 +27,34 @@ public abstract partial class DotsViewModel : ObservableObject
     [ObservableProperty]
     private bool _isGreenPulsing;
 
+    /// <summary>
+    /// The RESTING label: just the two initials, "A · C" (folder · agent), so the pill stays tiny.
+    /// Empty when nothing is being shown (no session), which hides the label chip entirely.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LabelText))]
+    private string _initialsLabel = "";
+
+    /// <summary>The whole "folder · Tool" — what the label expands to on hover, and what
+    /// Settings → Session Tracking lists.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasLabel))]
+    [NotifyPropertyChangedFor(nameof(LabelText))]
+    private string _fullLabel = "";
+
+    /// <summary>
+    /// True while the pointer is over this pill (the view sets it on enter/leave): the label chip then
+    /// shows <see cref="FullLabel"/> instead of <see cref="InitialsLabel"/> — the label expands IN
+    /// PLACE, replacing the old static tooltip. The chip grows rightward inside its own band; the dots,
+    /// timer and gear are laid out independently of it and never move (proved by --anchor-test).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LabelText))]
+    private bool _isLabelExpanded;
+
+    /// <summary>What the label chip renders right now: initials at rest, the full label on hover.</summary>
+    public string LabelText => IsLabelExpanded ? FullLabel : InitialsLabel;
+
     /// <summary>Lay the three dots out in a row (Horizontal) or a column (Vertical). Set from config by
     /// <see cref="WidgetViewModel"/> and propagated to each session row so every DotsView matches.</summary>
     [ObservableProperty]
@@ -52,6 +81,23 @@ public abstract partial class DotsViewModel : ObservableObject
     public bool IsRedActive => State == AggregateState.Red;
     public bool HasAgent => State != AggregateState.Off;
     public bool HasTimer => TimerText.Length > 0;
+    public bool HasLabel => FullLabel.Length > 0;
+
+    /// <summary>Set both label forms from a session's tool + working directory (see <see cref="SessionLabel"/>).
+    /// Assigning identical values raises nothing, so this is safe to call on every 250ms poll.</summary>
+    protected void SetLabel(string tool, string? cwd)
+    {
+        InitialsLabel = SessionLabel.Initials(tool, cwd);
+        FullLabel = SessionLabel.Full(tool, cwd);
+    }
+
+    /// <summary>Clear the label (nothing to show).</summary>
+    protected void ClearLabel()
+    {
+        InitialsLabel = "";
+        FullLabel = "";
+        IsLabelExpanded = false;
+    }
 
     // Reusable per-state pulse. Today only green uses it: entering green starts a configurable blink;
     // any other transition cancels it at once (so green→yellow leaves no leftover animation). A future

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Linq;
 using AgentSignal.App.Models;
 using AgentSignal.App.Services;
 using AgentSignal.Core;
@@ -7,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 
 namespace AgentSignal.App.ViewModels;
 
@@ -22,16 +24,28 @@ namespace AgentSignal.App.ViewModels;
 /// </summary>
 public partial class WidgetViewModel : DotsViewModel
 {
-    private readonly SessionReader _reader = new();
+    private readonly SessionReader _reader;
     private readonly DispatcherTimer? _timer;
     private readonly AlertService? _alerts;
     private readonly bool _live;
     private bool _firstRefresh = true;
     private bool _initializing;
 
-    /// <summary>One row per live session, reused across polls so the expanded list never flickers.</summary>
+    /// <summary>The VISIBLE rows — what the expanded view renders. A subset of <see cref="AllSessions"/>
+    /// (hidden sessions are left out), kept in sync IN PLACE so the list never rebuilds → never flickers.</summary>
     public ObservableCollection<SessionRowViewModel> Sessions { get; } = new();
 
+    /// <summary>EVERY tracked session, hidden ones included — the model keeps observing a hidden
+    /// session (its timer runs, its state stays current) so unhiding it is instant and correct. This
+    /// is also what Settings → Session Tracking lists, live.</summary>
+    public ObservableCollection<SessionRowViewModel> AllSessions { get; } = new();
+
+    /// <summary>Keys ("&lt;tool&gt;__&lt;sessionId&gt;") the user has hidden. Persisted, so a hidden pill
+    /// stays hidden across new hook events AND across a relaunch — but only until that exact session
+    /// ends, at which point the key is pruned (a brand-new session in the same folder shows normally).</summary>
+    private readonly HashSet<string> _hidden;
+
+    /// <summary>Count of VISIBLE sessions (hidden ones don't drive the pill).</summary>
     [ObservableProperty]
     private int _sessionCount;
 
@@ -41,6 +55,7 @@ public partial class WidgetViewModel : DotsViewModel
     [NotifyPropertyChangedFor(nameof(IsTimerShown))]
     [NotifyPropertyChangedFor(nameof(IsTimerChevronShown))]
     [NotifyPropertyChangedFor(nameof(IsStripGearVisible))]
+    [NotifyPropertyChangedFor(nameof(IsLabelShown))]
     private bool _isExpanded;
 
     /// <summary>The settings gear is revealed by clicking the dots (independent of sessions).</summary>
@@ -66,6 +81,8 @@ public partial class WidgetViewModel : DotsViewModel
     [NotifyPropertyChangedFor(nameof(AttachDock))]
     [NotifyPropertyChangedFor(nameof(AttachMargin))]
     [NotifyPropertyChangedFor(nameof(SessionsStackOrientation))]
+    [NotifyPropertyChangedFor(nameof(LabelDock))]
+    [NotifyPropertyChangedFor(nameof(LabelMargin))]
     [NotifyPropertyChangedFor(nameof(TimerHorizontal))]
     [NotifyPropertyChangedFor(nameof(TimerVertical))]
     [NotifyPropertyChangedFor(nameof(GearHorizontal))]
@@ -83,6 +100,8 @@ public partial class WidgetViewModel : DotsViewModel
     [NotifyPropertyChangedFor(nameof(TimerHorizontal))]
     [NotifyPropertyChangedFor(nameof(GearHorizontal))]
     [NotifyPropertyChangedFor(nameof(TimerChevronGlyph))]
+    [NotifyPropertyChangedFor(nameof(LabelDock))]
+    [NotifyPropertyChangedFor(nameof(LabelMargin))]
     private bool _attachFlip;
 
     // Timer collapsed behind its chevron. Visual only — the underlying WorkTimer keeps counting — and
@@ -97,10 +116,13 @@ public partial class WidgetViewModel : DotsViewModel
     /// When true (default), starts the 250ms poll. Pass false for static previews/tests, then call
     /// <see cref="PollOnce"/> manually to drive the model from outside a dispatcher.
     /// </param>
-    public WidgetViewModel(AlertService? alerts = null, bool live = true)
+    /// <param name="sessionsDir">Override the sessions directory (diagnostics only, e.g. --label-test
+    /// against a temp dir); null = the real ~/.agentsignal/sessions.</param>
+    public WidgetViewModel(AlertService? alerts = null, bool live = true, string? sessionsDir = null)
     {
         _alerts = alerts;
         _live = live;
+        _reader = new SessionReader(sessionsDir);
 
         // Seed layout state from config so the very first render is already correct (the window pushes
         // live changes later). Guard the persist hook so seeding doesn't write back to disk.
@@ -108,6 +130,7 @@ public partial class WidgetViewModel : DotsViewModel
         AppConfig cfg = ConfigService.Instance.Current;
         IsVertical = string.Equals(cfg.Orientation, "Vertical", StringComparison.OrdinalIgnoreCase);
         IsTimerCollapsed = cfg.TimerCollapsed;
+        _hidden = new HashSet<string>(cfg.HiddenSessions ?? new List<string>(), StringComparer.Ordinal);
         _initializing = false;
 
         // The timer/chevron visibility depends on both whether there's a value (HasTimer, which tracks
@@ -118,6 +141,10 @@ public partial class WidgetViewModel : DotsViewModel
             {
                 OnPropertyChanged(nameof(IsTimerShown));
                 OnPropertyChanged(nameof(IsTimerChevronShown));
+            }
+            else if (e.PropertyName is nameof(HasLabel) or nameof(FullLabel))
+            {
+                OnPropertyChanged(nameof(IsLabelShown));
             }
         };
 
@@ -145,6 +172,43 @@ public partial class WidgetViewModel : DotsViewModel
         Dock.Left => new Thickness(0, 0, 3, 0),
         _ => default,
     };
+
+    /// <summary>
+    /// Where the label chip attaches: the edge OPPOSITE the timer/gear strip when horizontal (strip
+    /// below → label above, and vice versa near the bottom edge), and always above the column when
+    /// vertical (the strip is beside it there, so the top is free). Docked before everything else, so
+    /// it spans the widget's full width and the dots keep their own anchor.
+    /// </summary>
+    public Dock LabelDock => IsVertical
+        ? Dock.Top
+        : (AttachFlip ? Dock.Bottom : Dock.Top);
+
+    /// <summary>A small nudge in from the dots pill's left edge so the label doesn't sit hard against it.</summary>
+    private const double LabelInset = 8;
+
+    /// <summary>Footprint of the attach strip when it docks to the LEFT of the dots (vertical + flip):
+    /// the fixed 84px reservation slot plus its 3px facing gap. The label is offset by it so the chip
+    /// still lines up with the dots column rather than floating above the strip.</summary>
+    private const double VerticalStripWidth = 87;
+
+    /// <summary>The label chip's own gap: the same 3px the strip uses on the side facing the dots, plus
+    /// the inward nudge (and the strip offset when the strip sits to the left of the dots). The chip is
+    /// always LEFT-anchored inside its band, so expanding it on hover grows it rightward from a fixed
+    /// left edge — in place, and with nothing below it to push.</summary>
+    public Thickness LabelMargin
+    {
+        get
+        {
+            double left = LabelInset + (IsVertical && AttachFlip ? VerticalStripWidth : 0);
+            return LabelDock == Dock.Bottom
+                ? new Thickness(left, 3, 0, 0)
+                : new Thickness(left, 0, 0, 3);
+        }
+    }
+
+    /// <summary>The single pill's label chip. Hidden while expanded — each session row then carries
+    /// its own label, so a second (driver-hopping) copy would be redundant.</summary>
+    public bool IsLabelShown => HasLabel && !IsExpanded;
 
     /// <summary>Multiple session rows stack across the dots axis (rows when horizontal, columns when vertical).</summary>
     public Orientation SessionsStackOrientation => IsVertical ? Orientation.Horizontal : Orientation.Vertical;
@@ -180,7 +244,7 @@ public partial class WidgetViewModel : DotsViewModel
     {
         Orientation o = value ? Orientation.Vertical : Orientation.Horizontal;
         DotsOrientation = o;
-        foreach (SessionRowViewModel row in Sessions)
+        foreach (SessionRowViewModel row in AllSessions)
             row.DotsOrientation = o;
         UpdateRowGear();
     }
@@ -202,11 +266,95 @@ public partial class WidgetViewModel : DotsViewModel
     {
         // One collapse preference for the whole widget: the expanded rows mirror it (their chips and
         // chevrons swap together, and the state carries over when sessions drop back to one).
-        foreach (SessionRowViewModel row in Sessions)
+        foreach (SessionRowViewModel row in AllSessions)
             row.IsTimerCollapsed = value;
         if (_initializing || !_live) return;
         ConfigService.Instance.Update(c => c.TimerCollapsed = value); // persist across relaunch
     }
+
+    // ---- Hide / show one session -------------------------------------------------------------------
+    // Hiding is per EXACT session (tool + session id), never per folder: a new session in the same
+    // directory gets a different id and appears normally. A hidden session keeps being tracked — the
+    // row stays in AllSessions and keeps observing — it just doesn't render a pill and doesn't count
+    // toward the aggregate colour, the driving timer or the alerts.
+
+    /// <summary>Right-click → "Hide" on the SINGLE (collapsed) pill: hides whichever session that pill
+    /// is currently showing. Each expanded row has its own Hide command for its own session.</summary>
+    [RelayCommand]
+    private void HideDriving()
+    {
+        if (_drivingRow is not null)
+            _drivingRow.IsShown = false;
+    }
+
+    /// <summary>A row's visibility changed (right-click → Hide, or the Settings checkbox): persist the
+    /// hidden set and re-sync the visible pills immediately, rather than waiting for the next poll.</summary>
+    private void OnRowShownChanged(SessionRowViewModel row)
+    {
+        bool changed = row.IsShown ? _hidden.Remove(row.Key) : _hidden.Add(row.Key);
+        if (changed) PersistHidden();
+
+        SyncVisibleRows();
+        UpdateRowGear();
+        SessionCount = Sessions.Count;
+        IsExpanded = Sessions.Count > 1;
+        // The pill it was driving may have just vanished (or come back) — the next poll recomputes
+        // colour/timer/label from the live files in a few ms, which is soon enough and keeps ONE code
+        // path for the aggregate.
+    }
+
+    /// <summary>Drop hidden keys whose session is no longer live, so the set survives a relaunch but
+    /// never outlives the session it refers to.</summary>
+    private void PruneHidden(HashSet<string> liveKeys)
+    {
+        if (_hidden.Count == 0) return;
+        if (_hidden.RemoveWhere(k => !liveKeys.Contains(k)) > 0)
+            PersistHidden();
+    }
+
+    private void PersistHidden()
+    {
+        if (_initializing || !_live) return;
+        ConfigService.Instance.Update(c => c.HiddenSessions = _hidden.ToList());
+    }
+
+    /// <summary>Mirror the shown subset of <see cref="AllSessions"/> into <see cref="Sessions"/>
+    /// IN PLACE (insert/move/remove), preserving instances so the bound list never rebuilds.</summary>
+    private void SyncVisibleRows()
+    {
+        int target = 0;
+        foreach (SessionRowViewModel row in AllSessions)
+        {
+            if (!row.IsShown) continue;
+            int current = IndexOfFrom(row, target);
+            if (current < 0) Sessions.Insert(target, row);
+            else if (current != target) Sessions.Move(current, target);
+            target++;
+        }
+        for (int i = Sessions.Count - 1; i >= target; i--)
+            Sessions.RemoveAt(i);
+    }
+
+    private int IndexOfFrom(SessionRowViewModel row, int start)
+    {
+        for (int i = start; i < Sessions.Count; i++)
+            if (ReferenceEquals(Sessions[i], row)) return i;
+        return -1;
+    }
+
+    /// <summary>The session states whose rows are currently shown (hidden ones filtered out).</summary>
+    private List<SessionState> VisibleOnly(IReadOnlyList<SessionState> sessions)
+    {
+        var visible = new List<SessionState>(sessions.Count);
+        foreach (SessionState s in sessions)
+            if (!_hidden.Contains(Key(s)))
+                visible.Add(s);
+        return visible;
+    }
+
+    /// <summary>The hidden keys as they stand right now — for diagnostics (--label-test asserts that a
+    /// key is dropped once its session ends).</summary>
+    public IReadOnlyCollection<string> HiddenKeys => _hidden;
 
     /// <summary>Run one poll/reconcile cycle. Used by the live timer and by the --watch diagnostic.</summary>
     public void PollOnce() => Refresh();
@@ -233,8 +381,10 @@ public partial class WidgetViewModel : DotsViewModel
         IReadOnlyList<SessionState> sessions = _reader.ReadLive();
         DateTime now = DateTime.UtcNow;
 
-        // Reconcile the row list in place: update existing rows, add new ones, drop ended ones.
+        // Reconcile the TRACKED row list in place: update existing rows, add new ones, drop ended ones.
         // Never Clear()-then-rebuild — that would flicker the expanded list on every 250ms tick.
+        // Hidden sessions are reconciled and observed exactly like any other: hiding is a display
+        // decision, so the timer keeps running underneath and unhiding is instantly correct.
         var seen = new HashSet<string>(sessions.Count);
         foreach (SessionState s in sessions)
         {
@@ -243,36 +393,45 @@ public partial class WidgetViewModel : DotsViewModel
             SessionRowViewModel? row = FindRow(key);
             if (row is null)
             {
-                row = new SessionRowViewModel(s.Tool, s.SessionId)
+                row = new SessionRowViewModel(s.Tool, s.SessionId, OnRowShownChanged, shown: !_hidden.Contains(key))
                 {
                     DotsOrientation = DotsOrientation,
                     IsTimerCollapsed = IsTimerCollapsed,
                 };
-                Sessions.Add(row);
+                AllSessions.Add(row);
             }
             row.Observe(s, now);
         }
-        for (int i = Sessions.Count - 1; i >= 0; i--)
-            if (!seen.Contains(Sessions[i].Key))
-                Sessions.RemoveAt(i);
+        for (int i = AllSessions.Count - 1; i >= 0; i--)
+            if (!seen.Contains(AllSessions[i].Key))
+                AllSessions.RemoveAt(i);
+
+        // A hide lasts only as long as its session: once the session file is gone, drop the key so a
+        // brand-new session (new id, even the same folder) is never born hidden.
+        PruneHidden(seen);
+        SyncVisibleRows();
+
+        // Only VISIBLE sessions drive the pill — colour, timer and alerts. A hidden session the user
+        // dismissed must not light the widget red or beep from behind the curtain.
+        List<SessionState> visible = VisibleOnly(sessions);
         UpdateRowGear(); // adds/removals can change which row is last (the gear's horizontal anchor)
 
-        SessionCount = sessions.Count;
-        IsExpanded = sessions.Count > 1; // per-session rows appear automatically for 2+ sessions
+        SessionCount = visible.Count;
+        IsExpanded = visible.Count > 1; // per-session rows appear automatically for 2+ sessions
 
         // The DISPLAYED colour honours the stale-yellow demotion (Decision #3); alerts are keyed to
         // the REAL states below, so a demotion (a guess) never beeps, and if the demotion was wrong
         // (the turn was still working) the eventual real finish still fires its green alert.
         AggregateState prevReal = _realState;
-        _realState = Aggregate(sessions);
+        _realState = Aggregate(visible);
         // Quiet green = no celebration blink for the green right after a manual reset (a clear,
         // not a finish). The displayed State IS the real aggregate — no display-side demotion
         // (Decision #3 reversed: the light only changes on real events).
         QuietGreen = _quietReset;
         State = _realState;
-        TimerText = DrivingTimerText(sessions);
+        UpdateDriving(visible); // the collapsed pill's timer AND label come from the driving session
         TickPulse(now);
-        FireAlerts(sessions, prevReal, _realState);
+        FireAlerts(visible, prevReal, _realState);
         _quietReset = false; // one-shot, consumed by the pass that follows the reset
     }
 
@@ -313,20 +472,32 @@ public partial class WidgetViewModel : DotsViewModel
 
     private SessionRowViewModel? FindRow(string key)
     {
-        foreach (SessionRowViewModel r in Sessions)
+        foreach (SessionRowViewModel r in AllSessions)
             if (r.Key == key) return r;
         return null;
     }
 
     private static string Key(SessionState s) => s.Tool + "__" + s.SessionId;
 
-    /// <summary>The driving session's timer text for the collapsed pill (red wins, else most-recent).</summary>
-    private string DrivingTimerText(IReadOnlyList<SessionState> sessions)
+    /// <summary>The row the collapsed pill is currently showing (red wins, else most recent). Kept so
+    /// the right-click → Hide on the single pill knows which exact session to hide.</summary>
+    private SessionRowViewModel? _drivingRow;
+
+    /// <summary>Point the collapsed pill at its driving session: its timer text and its label
+    /// (folder · tool). With nothing visible, both clear and the chips disappear.</summary>
+    private void UpdateDriving(IReadOnlyList<SessionState> sessions)
     {
         SessionState? driver = SelectDriver(sessions);
-        if (driver is null) return "";
-        SessionRowViewModel? row = FindRow(Key(driver));
-        return row is { HasTimer: true } ? row.TimerText : "";
+        _drivingRow = driver is null ? null : FindRow(Key(driver));
+        if (_drivingRow is null)
+        {
+            TimerText = "";
+            ClearLabel();
+            return;
+        }
+        TimerText = _drivingRow.HasTimer ? _drivingRow.TimerText : "";
+        InitialsLabel = _drivingRow.InitialsLabel;
+        FullLabel = _drivingRow.FullLabel;
     }
 
     /// <summary>

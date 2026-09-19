@@ -42,6 +42,11 @@ public static class SessionResetService
             }
             if (s is null || s.State == "green") continue; // already idle — leave its ts/event alone
 
+            // Never touch a ghost. Rewriting ts=now on a dead session whose pid was recycled would
+            // make that unrelated process look older than the session's "last event" and resurrect
+            // the ghost; the reader deletes it on its next poll instead.
+            if (!SessionLiveness.Check(s).Alive) continue;
+
             // Yellow AND red both clear: reset is a deliberate "everything is idle" from the user.
             // (A red whose prompt is in fact still live self-corrects — answering it fires the next
             // hook, which rewrites the file and the widget follows.) Pid is preserved for liveness.

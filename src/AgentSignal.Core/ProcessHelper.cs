@@ -30,6 +30,51 @@ public static class ProcessHelper
     }
 
     /// <summary>
+    /// When the process with this id started, in UTC — or null if it isn't running or can't be
+    /// inspected. Paired with a pid it identifies ONE process: pids are recycled (aggressively on
+    /// Windows, where every boot re-issues small numbers), start times are not.
+    /// </summary>
+    public static DateTime? StartTimeUtc(int pid)
+    {
+        if (pid <= 0) return null;
+        try
+        {
+            using var p = System.Diagnostics.Process.GetProcessById(pid);
+            return p.StartTime.ToUniversalTime();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Start times (UTC) of every running process whose name contains any of <paramref name="nameHints"/>
+    /// (case-insensitive). A process whose start time can't be read is reported as
+    /// <see cref="DateTime.MinValue"/> ("started long ago"), so callers err toward keeping a session.
+    /// </summary>
+    public static List<DateTime> StartTimesOfProcessesNamed(IReadOnlyList<string> nameHints)
+    {
+        var result = new List<DateTime>();
+        try
+        {
+            foreach (System.Diagnostics.Process p in System.Diagnostics.Process.GetProcesses())
+            {
+                using (p)
+                {
+                    string n;
+                    try { n = p.ProcessName; } catch { continue; }
+                    bool match = false;
+                    foreach (string hint in nameHints)
+                        if (n.Contains(hint, StringComparison.OrdinalIgnoreCase)) { match = true; break; }
+                    if (!match) continue;
+                    try { result.Add(p.StartTime.ToUniversalTime()); }
+                    catch { result.Add(DateTime.MinValue); }
+                }
+            }
+        }
+        catch { /* enumeration failed: caller sees "no such process" */ }
+        return result;
+    }
+
+    /// <summary>
     /// Walk up this process's ancestry and return the pid of the nearest ancestor whose executable
     /// name (or, on Linux, command line) contains <paramref name="nameHint"/> (case-insensitive) —
     /// i.e. the agent process that spawned the hook. Returns 0 if none is found. Because the hook is

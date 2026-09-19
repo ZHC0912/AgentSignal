@@ -105,6 +105,42 @@
       <CheckBox Content="Launch on startup" IsChecked="{Binding LaunchOnStartup}" />
     </StackPanel>
 
+    <!-- Session tracking: show/hide individual session pills -->
+    <TextBlock Classes="section" Text="SESSION TRACKING" />
+    <StackPanel Spacing="6">
+      <TextBlock Foreground="#8C9AAB" FontSize="11" TextWrapping="Wrap"
+                 Text="Every active session. Untick one to hide its pill (same as right-clicking the pill → Hide) — it keeps being tracked underneath and stays hidden until that session ends. Tick it again to bring the pill back." />
+      <Border BorderBrush="#26FFFFFF" BorderThickness="1" CornerRadius="6" Padding="10,8"
+              MaxHeight="190">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Spacing="6">
+            <!-- Bound straight to the widget's live session collection, so rows appear/disappear here
+                 as sessions come and go while this window is open. -->
+            <ItemsControl ItemsSource="{Binding TrackedSessions}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel Spacing="6" /></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <!-- IsShown is two-way: unticking hides the pill immediately and persists the
+                       hidden set; ticking restores it. -->
+                  <CheckBox IsChecked="{Binding IsShown, Mode=TwoWay}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <TextBlock Text="{Binding FullLabel}" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding TimerText}" VerticalAlignment="Center"
+                                 Foreground="#8C9AAB" FontFamily="Consolas, Menlo, monospace" FontSize="11" />
+                    </StackPanel>
+                  </CheckBox>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Text="No active sessions." Foreground="#8C9AAB" FontSize="12"
+                       IsVisible="{Binding !HasTrackedSessions}" />
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </StackPanel>
+
     <!-- Reset -->
     <TextBlock Classes="section" Text="RESET" />
     <StackPanel Spacing="6">

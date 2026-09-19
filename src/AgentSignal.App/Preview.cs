@@ -32,9 +32,17 @@ internal static class Preview
             .SetupWithoutStarting();
         Services.ThemeService.Apply(Services.ConfigService.Instance.Current);
 
-        static WidgetViewModel Vm(bool vertical, bool flip, bool collapsed, bool gear)
+        static WidgetViewModel Vm(bool vertical, bool flip, bool collapsed, bool gear, bool hovered = false)
         {
-            var vm = new WidgetViewModel(live: false) { State = AggregateState.Yellow, TimerText = "1:10", IsGearVisible = gear };
+            var vm = new WidgetViewModel(live: false)
+            {
+                State = AggregateState.Yellow,
+                TimerText = "1:10",
+                IsGearVisible = gear,
+                InitialsLabel = "A · C",                 // the resting pill label
+                FullLabel = "AgentSignal · Claude",      // what it expands to on hover
+                IsLabelExpanded = hovered,
+            };
             vm.IsVertical = vertical;
             vm.AttachFlip = flip;
             vm.IsTimerCollapsed = collapsed;
@@ -49,6 +57,8 @@ internal static class Preview
             (Vm(true,  false, false, true),  "vertical · gear revealed\ndots column, pills to the RIGHT"),
             (Vm(true,  false, true,  true),  "vertical · timer collapsed\nchevron beside the column (›)"),
             (Vm(true,  true,  true,  true),  "vertical near RIGHT + collapsed\nchevron flips to ‹ (opens left)"),
+            (Vm(false, false, false, true, hovered: true), "horizontal · label HOVERED\nexpands in place; dots/timer/gear fixed"),
+            (Vm(true,  false, false, true, hovered: true), "vertical · label HOVERED\nexpands in place; column unmoved"),
         };
 
         var grid = new Avalonia.Controls.Primitives.UniformGrid { Columns = 3, Margin = new Thickness(4) };
@@ -137,40 +147,76 @@ internal static class Preview
             window.Show();
             Dispatcher.UIThread.RunJobs();
 
-            Point Measure(string timer, bool collapsed, bool gearVisible)
+            // `label` is the resting (initials) chip; `hovered` swaps in the full label, which is what
+            // the pointer does on the live widget — so the test measures the hover case for real.
+            Point Measure(string timer, bool collapsed, bool gearVisible, string label, bool hovered = false)
             {
                 vm.IsGearVisible = gearVisible;
                 vm.TimerText = timer;
                 vm.IsTimerCollapsed = collapsed;
+                vm.InitialsLabel = label;
+                vm.FullLabel = label.Length == 0 ? "" : "calorie-tracker · Antigravity"; // a long one on purpose
+                vm.IsLabelExpanded = hovered;
                 window.UpdateLayout();
                 Dispatcher.UIThread.RunJobs();
                 DotsView? dots = pill.GetVisualDescendants().OfType<DotsView>().FirstOrDefault();
                 return dots?.TranslatePoint(new Point(0, 0), pill) ?? new Point(double.NaN, double.NaN);
             }
 
-            // Cover both gear-visible and gear-hidden (gear is hidden by default, and the chevron's height
-            // must not grow the strip in either case). Baseline = chip + gear on; everything must match it.
-            Point baseline = Measure("1:10", false, true);
-            (string label, Point p)[] variants =
+            // The timer/gear strip must be just as stable as the dots (the owner's requirement covers
+            // both). Measuring the strip container covers the timer chip AND the gear, whose positions
+            // inside it are fixed by the reservation slot.
+            Point MeasureStrip()
             {
-                ("chevron/gearOn",   Measure("1:10", true, true)),
-                ("wide/gearOn",      Measure("12:34:56", false, true)),
-                ("hidden/gearOn",    Measure("", false, true)),
-                ("chip/gearOff",     Measure("1:10", false, false)),
-                ("chevron/gearOff",  Measure("1:10", true, false)),
-                ("hidden/gearOff",   Measure("", false, false)),
-            };
-            window.Close();
+                Control? strip = pill.GetVisualDescendants().OfType<Control>()
+                    .FirstOrDefault(c => c.Name == "AttachStrip");
+                return strip?.TranslatePoint(new Point(0, 0), pill) ?? new Point(double.NaN, double.NaN);
+            }
 
-            bool pass = variants.All(v => Close(baseline, v.p));
-            allPass &= pass;
-            Console.WriteLine($"{(pass ? "PASS" : "FAIL")}  {(vertical ? "vertical" : "horizontal")} · {(flip ? "flip" : "normal")}  (dock {vm.AttachDock})  baseline {Fmt(baseline)}");
-            foreach ((string label, Point p) in variants)
-                Console.WriteLine($"        {(Close(baseline, p) ? "ok  " : "MOVED")} {label,-16} {Fmt(p)}");
+            // Run the whole matrix twice: with NO label chip, and with one. Within each pass the dots
+            // must not move as the timer chip ⇄ chevron, the text widens, the timer hides, or the gear
+            // toggles. (The label chip sits in its own docked band, so it shifts the dots by a constant
+            // band height once and then never again — it is a different baseline, not a wobble.)
+            foreach (string labelText in new[] { "", "C · C" })
+            {
+                // Cover both gear-visible and gear-hidden (gear is hidden by default, and the chevron's
+                // height must not grow the strip in either case). Baseline = chip + gear on.
+                Point baseline = Measure("1:10", false, true, labelText);
+                Point stripBaseline = MeasureStrip();
+                // Hover expansion must move the strip (timer + gear) no more than it moves the dots.
+                Measure("1:10", false, true, labelText, hovered: true);
+                Point stripHovered = MeasureStrip();
+                Measure("1:10", false, true, labelText);
+                (string label, Point p)[] variants =
+                {
+                    ("chevron/gearOn",   Measure("1:10", true, true, labelText)),
+                    ("wide/gearOn",      Measure("12:34:56", false, true, labelText)),
+                    ("hidden/gearOn",    Measure("", false, true, labelText)),
+                    ("chip/gearOff",     Measure("1:10", false, false, labelText)),
+                    ("chevron/gearOff",  Measure("1:10", true, false, labelText)),
+                    ("hidden/gearOff",   Measure("", false, false, labelText)),
+                    ("longLabel",        Measure("1:10", false, true, labelText.Length == 0 ? "" : "WWW · WWW")),
+                    // THE HOVER CASE: the label expands in place to the full "folder · Tool". The dots
+                    // must not budge by a pixel — nor the timer/gear, laid out beside them in the same
+                    // self-sized group.
+                    ("hoverExpanded",    Measure("1:10", false, true, labelText, hovered: true)),
+                    ("hoverThenOut",     Measure("1:10", false, true, labelText)),
+                };
+
+                bool stripPass = Close(stripBaseline, stripHovered);
+                bool pass = variants.All(v => Close(baseline, v.p)) && stripPass;
+                allPass &= pass;
+                string labelState = labelText.Length == 0 ? "no label" : "labelled";
+                Console.WriteLine($"{(pass ? "PASS" : "FAIL")}  {(vertical ? "vertical" : "horizontal")} · {(flip ? "flip" : "normal")} · {labelState}  (dock {vm.AttachDock}, label {vm.LabelDock})  baseline {Fmt(baseline)}");
+                foreach ((string label, Point p) in variants)
+                    Console.WriteLine($"        {(Close(baseline, p) ? "ok  " : "MOVED")} {label,-16} {Fmt(p)}");
+                Console.WriteLine($"        {(stripPass ? "ok  " : "MOVED")} {"strip/hover",-16} {Fmt(stripHovered)}  (timer+gear, resting {Fmt(stripBaseline)})");
+            }
+            window.Close();
         }
 
         Console.WriteLine(allPass
-            ? "\nALL PASS — dots pill is pixel-stable across chip⇄chevron, text-width and hidden↔shown in every layout."
+            ? "\nALL PASS — dots pill is pixel-stable across chip⇄chevron, text-width, hidden↔shown, label-width AND label hover-expansion in every layout (the label chip's own band is a constant offset)."
             : "\nFAILURES ABOVE — dots pill moved.");
         return allPass ? 0 : 1;
     }
@@ -197,7 +243,13 @@ internal static class Preview
         var rows = new StackPanel { Orientation = Orientation.Vertical, Spacing = 16 };
         foreach ((AggregateState state, string timer, string label) in items)
         {
-            var vm = new WidgetViewModel(live: false) { State = state, TimerText = timer };
+            var vm = new WidgetViewModel(live: false)
+            {
+                State = state,
+                TimerText = timer,
+                InitialsLabel = state == AggregateState.Off ? "" : "C · C",
+                FullLabel = state == AggregateState.Off ? "" : "calorie-tracker · Claude",
+            };
             var row = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -220,8 +272,16 @@ internal static class Preview
         // consistent with the collapsed pill); the gear pill is revealed and the timer pill shows the
         // driving session's time.
         var expandedVm = new WidgetViewModel(live: false) { IsExpanded = true, TimerText = "0:48" };
-        expandedVm.Sessions.Add(new SessionRowViewModel("claude", "alpha") { State = AggregateState.Red, TimerText = "0:48" });
-        expandedVm.Sessions.Add(new SessionRowViewModel("claude", "bravo") { State = AggregateState.Yellow, TimerText = "2:03" });
+        expandedVm.Sessions.Add(new SessionRowViewModel("claude", "alpha")
+        {
+            State = AggregateState.Red, TimerText = "0:48",
+            InitialsLabel = "C · C", FullLabel = "calorie-tracker · Claude",
+        });
+        expandedVm.Sessions.Add(new SessionRowViewModel("antigravity", "bravo")
+        {
+            State = AggregateState.Yellow, TimerText = "2:03",
+            InitialsLabel = "M · A", FullLabel = "my-app · Antigravity",
+        });
         var expandedRow = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -243,8 +303,16 @@ internal static class Preview
         // confirm the dots/glow/timer stay crisp (vector-scaled) and each dot's glow is a round halo
         // (no square clip) at max scale.
         var scaledVm = new WidgetViewModel(live: false) { IsExpanded = true, TimerText = "0:48" };
-        scaledVm.Sessions.Add(new SessionRowViewModel("claude", "alpha") { State = AggregateState.Green, TimerText = "0:48" });
-        scaledVm.Sessions.Add(new SessionRowViewModel("claude", "bravo") { State = AggregateState.Red, TimerText = "2:03" });
+        scaledVm.Sessions.Add(new SessionRowViewModel("claude", "alpha")
+        {
+            State = AggregateState.Green, TimerText = "0:48",
+            InitialsLabel = "C · C", FullLabel = "calorie-tracker · Claude",
+        });
+        scaledVm.Sessions.Add(new SessionRowViewModel("claude", "bravo")
+        {
+            State = AggregateState.Red, TimerText = "2:03",
+            InitialsLabel = "M · C", FullLabel = "my-app · Claude",
+        });
         var scaledRow = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -276,6 +344,8 @@ internal static class Preview
                 State = AggregateState.Yellow,
                 TimerText = "1:10",
                 IsGearVisible = true,
+                InitialsLabel = "C · C",
+                FullLabel = "calorie-tracker · Claude",
             };
             vm.IsVertical = vertical;
             vm.AttachFlip = flip;

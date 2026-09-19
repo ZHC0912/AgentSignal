@@ -146,7 +146,9 @@ internal static class AntigravityPoller
             try { files = Directory.GetFiles(sessionsDir, FilePrefix + "*.json"); }
             catch { return 0; }
 
-            bool? ideAlive = null; // lazily computed once per tick, only if some session has no pid
+            // One process enumeration per tick, shared by every pid-less session (computed lazily, so
+            // it normally never runs).
+            List<DateTime>? ideStarts = null;
             int live = 0;
             foreach (string file in files)
             {
@@ -154,16 +156,19 @@ internal static class AntigravityPoller
                 if (s is null) { live++; continue; } // mid-write; next tick
 
                 // Ghost cleanup: the session's IDE process is gone (Antigravity has no session-end
-                // hook, so this — plus the widget's identical filter — is how ended sessions vanish).
-                bool dead = s.Pid > 0
-                    ? !ProcessHelper.IsAlive(s.Pid)
-                    : !(ideAlive ??= AnyIdeProcessAlive());
-                if (dead)
+                // hook, so this — plus the widget's sweep — is how ended sessions vanish). Uses the
+                // SAME rule as the widget (SessionLiveness: pid + start time), not a bare "is some
+                // process on this pid" probe — pids are recycled, and because this poller rewrites
+                // ts=now on the files it keeps, trusting a recycled pid here would refresh a ghost's
+                // ts and make it look alive to the widget too.
+                SessionLiveness.Verdict verdict = SessionLiveness.Check(s, tool =>
+                    ideStarts ??= ProcessHelper.StartTimesOfProcessesNamed(SessionLiveness.AgentProcessNames(tool)));
+                if (!verdict.Alive)
                 {
                     try { File.Delete(file); } catch { }
                     string convId = Path.GetFileNameWithoutExtension(file)[FilePrefix.Length..];
                     _convs.Remove(convId);
-                    Log($"{convId}: IDE gone — session file removed");
+                    Log($"{convId}: IDE gone — session file removed ({verdict.Reason})");
                     if (print) Console.WriteLine($"{convId}: IDE process gone -> session removed");
                     continue;
                 }
@@ -340,22 +345,6 @@ internal static class AntigravityPoller
         {
             try { return JsonSerializer.Deserialize(File.ReadAllText(path), AgentJsonContext.Default.SessionState); }
             catch { return null; }
-        }
-
-        private static bool AnyIdeProcessAlive()
-        {
-            try
-            {
-                foreach (System.Diagnostics.Process p in System.Diagnostics.Process.GetProcesses())
-                {
-                    string n = p.ProcessName;
-                    if (n.Contains("antigravity", StringComparison.OrdinalIgnoreCase) ||
-                        n.Contains("language_server", StringComparison.OrdinalIgnoreCase))
-                        return true;
-                }
-            }
-            catch { }
-            return false;
         }
 
         public void CleanupTemp()
